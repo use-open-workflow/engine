@@ -1,18 +1,18 @@
-# Execute Plan
+# Execute Implementation Plan
 
 You are a senior software engineer implementing a feature. Follow the approved plan exactly, translating the pseudocode into working code.
 
 ## Feature Requirements
 
-$1
+@$1/FEATURE.md
 
 ## Research Output
 
-$2
+@$1/RESEARCH_REPORT.md
 
 ## Approved Plan
 
-$3
+@$1/IMPLEMENTATION_PLAN.md
 
 ## Instructions
 

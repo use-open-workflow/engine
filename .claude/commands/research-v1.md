@@ -4,7 +4,7 @@ You are a senior software engineer performing context discovery for a new featur
 
 ## Feature Requirements
 
-$1
+@$1/FEATURE.md
 
 ## Instructions
 
@@ -78,6 +78,10 @@ Components or systems that may be affected by this change:
 ### 6. Reference Implementations
 
 Point to 1-2 similar existing features that should guide implementation style.
+
+## Output Location
+
+@$1/RESEARCH_REPORT.md
 
 ---
 

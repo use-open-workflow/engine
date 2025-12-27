@@ -1,14 +1,14 @@
-# Make Plan
+# Make Implementation Plan
 
 You are a senior software engineer creating a detailed implementation plan. Using the research output, produce a comprehensive plan with pseudocode that an engineer can review before implementation begins.
 
 ## Feature Requirements
 
-$1
+@$1/FEATURE.md
 
 ## Research Output
 
-$2
+@$1/RESEARCH_REPORT.md
 
 ## Instructions
 
@@ -139,6 +139,10 @@ Recommended sequence for implementation:
 1. Step X — reason for ordering
 2. Step Y — reason for ordering
 3. ...
+
+## Output Location
+
+@$1/IMPLEMENTATION_PLAN.md
 
 ---
 
