@@ -4,43 +4,28 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"use-open-workflow.io/engine/internal/adapter/outbound"
 	"use-open-workflow.io/engine/internal/domain/node/aggregate"
+	nodeOutbound "use-open-workflow.io/engine/internal/port/node/outbound"
+	portOutbound "use-open-workflow.io/engine/internal/port/outbound"
 )
 
+// NodeTemplatePostgresWriteRepository implements NodeTemplateWriteRepository
+// It is bound to a specific UoW instance for the duration of a request
 type NodeTemplatePostgresWriteRepository struct {
-	pool *pgxpool.Pool
-	uow  *outbound.UnitOfWorkPostgres
+	uow portOutbound.UnitOfWork
 }
 
+// NewNodeTemplatePostgresWriteRepository creates a repository bound to the given UoW
 func NewNodeTemplatePostgresWriteRepository(
-	pool *pgxpool.Pool,
-	uow *outbound.UnitOfWorkPostgres,
+	uow portOutbound.UnitOfWork,
 ) *NodeTemplatePostgresWriteRepository {
 	return &NodeTemplatePostgresWriteRepository{
-		pool: pool,
-		uow:  uow,
+		uow: uow,
 	}
-}
-
-func (r *NodeTemplatePostgresWriteRepository) getQuerier(ctx context.Context) querier {
-	if tx, ok := r.uow.GetTx(ctx); ok {
-		return tx
-	}
-	return r.pool
-}
-
-type querier interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (r *NodeTemplatePostgresWriteRepository) Save(ctx context.Context, nodeTemplate *aggregate.NodeTemplate) error {
-	q := r.getQuerier(ctx)
+	q := r.uow.Querier(ctx)
 
 	_, err := q.Exec(ctx, `
 		INSERT INTO node_templates (id, name, created_at, updated_at)
@@ -57,7 +42,7 @@ func (r *NodeTemplatePostgresWriteRepository) Save(ctx context.Context, nodeTemp
 }
 
 func (r *NodeTemplatePostgresWriteRepository) Update(ctx context.Context, nodeTemplate *aggregate.NodeTemplate) error {
-	q := r.getQuerier(ctx)
+	q := r.uow.Querier(ctx)
 
 	_, err := q.Exec(ctx, `
 		UPDATE node_templates
@@ -75,7 +60,7 @@ func (r *NodeTemplatePostgresWriteRepository) Update(ctx context.Context, nodeTe
 }
 
 func (r *NodeTemplatePostgresWriteRepository) Delete(ctx context.Context, id string) error {
-	q := r.getQuerier(ctx)
+	q := r.uow.Querier(ctx)
 
 	_, err := q.Exec(ctx, `
 		DELETE FROM node_templates
@@ -87,4 +72,17 @@ func (r *NodeTemplatePostgresWriteRepository) Delete(ctx context.Context, id str
 	}
 
 	return nil
+}
+
+// --- Factory Implementation ---
+
+// NodeTemplatePostgresWriteRepositoryFactory creates Postgres write repositories
+type NodeTemplatePostgresWriteRepositoryFactory struct{}
+
+func NewNodeTemplatePostgresWriteRepositoryFactory() *NodeTemplatePostgresWriteRepositoryFactory {
+	return &NodeTemplatePostgresWriteRepositoryFactory{}
+}
+
+func (f *NodeTemplatePostgresWriteRepositoryFactory) Create(uow portOutbound.UnitOfWork) nodeOutbound.NodeTemplateWriteRepository {
+	return NewNodeTemplatePostgresWriteRepository(uow)
 }

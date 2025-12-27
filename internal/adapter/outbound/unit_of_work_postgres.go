@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	portOutbound "use-open-workflow.io/engine/internal/port/outbound"
 	"use-open-workflow.io/engine/pkg/domain"
 )
 
@@ -96,6 +97,14 @@ func (u *UnitOfWorkPostgres) RegisterDeleted(aggregate any) {
 func (u *UnitOfWorkPostgres) GetTx(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey).(pgx.Tx)
 	return tx, ok
+}
+
+// Querier returns the transaction if one is active, otherwise returns the pool
+func (u *UnitOfWorkPostgres) Querier(ctx context.Context) portOutbound.Querier {
+	if tx, ok := u.GetTx(ctx); ok {
+		return tx
+	}
+	return u.pool
 }
 
 func (u *UnitOfWorkPostgres) persistOutboxEvents(ctx context.Context, tx pgx.Tx) error {

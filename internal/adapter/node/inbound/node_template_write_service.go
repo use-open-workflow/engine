@@ -12,34 +12,38 @@ import (
 )
 
 type NodeTemplateWriteService struct {
-	uowFactory      outbound.UnitOfWorkFactory
-	factory         *aggregate.NodeTemplateFactory
-	readRepository  nodeOutbound.NodeTemplateReadRepository
-	writeRepository nodeOutbound.NodeTemplateWriteRepository
-	mapper          inbound.NodeTemplateMapper
-	idFactory       id.Factory
+	uowFactory             outbound.UnitOfWorkFactory
+	writeRepositoryFactory nodeOutbound.NodeTemplateWriteRepositoryFactory
+	factory                *aggregate.NodeTemplateFactory
+	readRepository         nodeOutbound.NodeTemplateReadRepository
+	mapper                 inbound.NodeTemplateMapper
+	idFactory              id.Factory
 }
 
 func NewNodeTemplateWriteService(
 	uowFactory outbound.UnitOfWorkFactory,
+	writeRepositoryFactory nodeOutbound.NodeTemplateWriteRepositoryFactory,
 	factory *aggregate.NodeTemplateFactory,
 	readRepository nodeOutbound.NodeTemplateReadRepository,
-	writeRepository nodeOutbound.NodeTemplateWriteRepository,
 	mapper inbound.NodeTemplateMapper,
 	idFactory id.Factory,
 ) *NodeTemplateWriteService {
 	return &NodeTemplateWriteService{
-		uowFactory:      uowFactory,
-		factory:         factory,
-		readRepository:  readRepository,
-		writeRepository: writeRepository,
-		mapper:          mapper,
-		idFactory:       idFactory,
+		uowFactory:             uowFactory,
+		writeRepositoryFactory: writeRepositoryFactory,
+		factory:                factory,
+		readRepository:         readRepository,
+		mapper:                 mapper,
+		idFactory:              idFactory,
 	}
 }
 
 func (s *NodeTemplateWriteService) Create(ctx context.Context, input inbound.CreateNodeTemplateInput) (*inbound.NodeTemplateDTO, error) {
+	// Create UoW for this request
 	uow := s.uowFactory.Create()
+
+	// Create repository bound to THIS UoW
+	writeRepo := s.writeRepositoryFactory.Create(uow)
 
 	txCtx, err := uow.Begin(ctx)
 	if err != nil {
@@ -54,10 +58,12 @@ func (s *NodeTemplateWriteService) Create(ctx context.Context, input inbound.Cre
 
 	nodeTemplate := s.factory.Make(input.Name)
 
-	if err = s.writeRepository.Save(txCtx, nodeTemplate); err != nil {
+	// Save using the UoW-bound repository
+	if err = writeRepo.Save(txCtx, nodeTemplate); err != nil {
 		return nil, fmt.Errorf("failed to save node template: %w", err)
 	}
 
+	// Commit - this will persist outbox events from registered aggregates
 	if err = uow.Commit(txCtx); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -66,7 +72,11 @@ func (s *NodeTemplateWriteService) Create(ctx context.Context, input inbound.Cre
 }
 
 func (s *NodeTemplateWriteService) Update(ctx context.Context, id string, input inbound.UpdateNodeTemplateInput) (*inbound.NodeTemplateDTO, error) {
+	// Create UoW for this request
 	uow := s.uowFactory.Create()
+
+	// Create repository bound to THIS UoW
+	writeRepo := s.writeRepositoryFactory.Create(uow)
 
 	txCtx, err := uow.Begin(ctx)
 	if err != nil {
@@ -90,7 +100,8 @@ func (s *NodeTemplateWriteService) Update(ctx context.Context, id string, input 
 	// Update aggregate (this adds UpdateNodeTemplate event)
 	nodeTemplate.UpdateName(s.idFactory, input.Name)
 
-	if err = s.writeRepository.Update(txCtx, nodeTemplate); err != nil {
+	// Update using UoW-bound repository
+	if err = writeRepo.Update(txCtx, nodeTemplate); err != nil {
 		return nil, fmt.Errorf("failed to update node template: %w", err)
 	}
 
@@ -102,7 +113,11 @@ func (s *NodeTemplateWriteService) Update(ctx context.Context, id string, input 
 }
 
 func (s *NodeTemplateWriteService) Delete(ctx context.Context, id string) error {
+	// Create UoW for this request
 	uow := s.uowFactory.Create()
+
+	// Create repository bound to THIS UoW
+	writeRepo := s.writeRepositoryFactory.Create(uow)
 
 	txCtx, err := uow.Begin(ctx)
 	if err != nil {
@@ -115,7 +130,8 @@ func (s *NodeTemplateWriteService) Delete(ctx context.Context, id string) error 
 		}
 	}()
 
-	if err = s.writeRepository.Delete(txCtx, id); err != nil {
+	// Delete using UoW-bound repository
+	if err = writeRepo.Delete(txCtx, id); err != nil {
 		return fmt.Errorf("failed to delete node template: %w", err)
 	}
 
