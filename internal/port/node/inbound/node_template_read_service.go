@@ -1,5 +1,8 @@
 package inbound
 
+import "context"
+
 type NodeTemplateReadService interface {
-	List() ([]*NodeTemplateDTO, error)
+	List(ctx context.Context) ([]*NodeTemplateDTO, error)
+	GetByID(ctx context.Context, id string) (*NodeTemplateDTO, error)
 }

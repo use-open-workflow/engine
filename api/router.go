@@ -17,14 +17,21 @@ func SetupRouter(c *di.Container) *fiber.App {
 	app.Use(logger.New())
 
 	api := app.Group("/api/v1")
-	registerNodeRoutes(api, c)
+	registerNodeTemplateRoutes(api, c)
 
 	return app
 }
 
-func registerNodeRoutes(router fiber.Router, c *di.Container) {
-	nodeTemplateHandler := http.NewNodeTemplateHandler(c.NodeTemplateReadService)
+func registerNodeTemplateRoutes(router fiber.Router, c *di.Container) {
+	nodeTemplateHandler := http.NewNodeTemplateHandler(
+		c.NodeTemplateReadService,
+		c.NodeTemplateWriteService,
+	)
 
-	nodeTemplates := router.Group("/node-templates")
-	nodeTemplates.Get("/", nodeTemplateHandler.List)
+	nodeTemplate := router.Group("/node-template")
+	nodeTemplate.Get("/", nodeTemplateHandler.List)
+	nodeTemplate.Get("/:id", nodeTemplateHandler.GetByID)
+	nodeTemplate.Post("/", nodeTemplateHandler.Create)
+	nodeTemplate.Put("/:id", nodeTemplateHandler.Update)
+	nodeTemplate.Delete("/:id", nodeTemplateHandler.Delete)
 }

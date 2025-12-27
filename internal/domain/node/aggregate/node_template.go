@@ -3,6 +3,7 @@ package aggregate
 import (
 	"use-open-workflow.io/engine/internal/domain/node/event"
 	"use-open-workflow.io/engine/pkg/domain"
+	"use-open-workflow.io/engine/pkg/id"
 )
 
 type NodeTemplate struct {
@@ -10,13 +11,23 @@ type NodeTemplate struct {
 	Name string
 }
 
-func newNodeTemplate(id string, name string) *NodeTemplate {
+func newNodeTemplate(idFactory id.Factory, aggregateID string, name string) *NodeTemplate {
 	nodeTemplate := &NodeTemplate{
-		BaseAggregate: domain.BaseAggregate{
-			ID: id,
-		},
-		Name: name,
+		BaseAggregate: domain.NewBaseAggregate(aggregateID),
+		Name:          name,
 	}
-	nodeTemplate.AddEvent(event.NewCreateNodeTemplate(nodeTemplate.ID))
+	nodeTemplate.AddEvent(event.NewCreateNodeTemplate(idFactory, nodeTemplate.ID, name))
 	return nodeTemplate
+}
+
+func ReconstituteNodeTemplate(aggregateID string, name string) *NodeTemplate {
+	return &NodeTemplate{
+		BaseAggregate: domain.NewBaseAggregate(aggregateID),
+		Name:          name,
+	}
+}
+
+func (n *NodeTemplate) UpdateName(idFactory id.Factory, name string) {
+	n.Name = name
+	n.AddEvent(event.NewUpdateNodeTemplate(idFactory, n.ID, name))
 }

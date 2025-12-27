@@ -15,5 +15,5 @@ func NewNodeTemplateFactory(idFactory id.Factory) *NodeTemplateFactory {
 }
 
 func (s *NodeTemplateFactory) Make(name string) *NodeTemplate {
-	return newNodeTemplate(s.idFactory.New(), name)
+	return newNodeTemplate(s.idFactory, s.idFactory.New(), name)
 }

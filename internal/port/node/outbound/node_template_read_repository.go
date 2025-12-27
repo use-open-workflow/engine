@@ -1,8 +1,12 @@
 package outbound
 
-import "use-open-workflow.io/engine/internal/domain/node/aggregate"
+import (
+	"context"
 
-type NodeTemplateRepository interface {
-	FindMany() ([]*aggregate.NodeTemplate, error)
-	FindByID(id string) (*aggregate.NodeTemplate, error)
+	"use-open-workflow.io/engine/internal/domain/node/aggregate"
+)
+
+type NodeTemplateReadRepository interface {
+	FindMany(ctx context.Context) ([]*aggregate.NodeTemplate, error)
+	FindByID(ctx context.Context, id string) (*aggregate.NodeTemplate, error)
 }

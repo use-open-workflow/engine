@@ -5,19 +5,19 @@ import (
 	"use-open-workflow.io/engine/pkg/id"
 )
 
-type CreateNodeTemplate struct {
+type UpdateNodeTemplate struct {
 	domain.BaseEvent
 	NodeTemplateID string `json:"node_template_id"`
 	Name           string `json:"name"`
 }
 
-func NewCreateNodeTemplate(idFactory id.Factory, nodeTemplateID, name string) *CreateNodeTemplate {
-	return &CreateNodeTemplate{
+func NewUpdateNodeTemplate(idFactory id.Factory, nodeTemplateID, name string) *UpdateNodeTemplate {
+	return &UpdateNodeTemplate{
 		BaseEvent: domain.NewBaseEvent(
 			idFactory.New(),
 			nodeTemplateID,
 			"NodeTemplate",
-			"CreateNodeTemplate",
+			"UpdateNodeTemplate",
 		),
 		NodeTemplateID: nodeTemplateID,
 		Name:           name,
