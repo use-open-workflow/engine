@@ -51,8 +51,9 @@ func NewContainer(ctx context.Context) (*Container, error) {
 
 	// Repositories
 	nodeTemplateReadRepository := nodeAdapterOutbound.NewNodeTemplatePostgresReadRepository(pool)
-	sharedUow := adapterOutbound.NewUnitOfWorkPostgres(pool)
-	nodeTemplateWriteRepository := nodeAdapterOutbound.NewNodeTemplatePostgresWriteRepository(pool, sharedUow)
+
+	// Write Repository Factory (replaces sharedUow + static repository)
+	nodeTemplateWriteRepositoryFactory := nodeAdapterOutbound.NewNodeTemplatePostgresWriteRepositoryFactory()
 
 	// Services
 	nodeTemplateReadService := nodeAdapterInbound.NewNodeTemplateReadService(
@@ -62,9 +63,9 @@ func NewContainer(ctx context.Context) (*Container, error) {
 
 	nodeTemplateWriteService := nodeAdapterInbound.NewNodeTemplateWriteService(
 		uowFactory,
+		nodeTemplateWriteRepositoryFactory,
 		nodeTemplateFactory,
 		nodeTemplateReadRepository,
-		nodeTemplateWriteRepository,
 		nodeTemplateInboundMapper,
 		idFactory,
 	)
