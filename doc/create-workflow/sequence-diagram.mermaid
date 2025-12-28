@@ -1,0 +1,33 @@
+sequenceDiagram
+  participant UI
+  participant NodeTemplateAPI
+  participant WorkflowAPI
+  participant CredentialAPI
+
+  participant ExternalAuthServer
+
+  UI ->> NodeTemplateAPI: List node templates
+  NodeTemplateAPI -->> UI: Node templates
+
+  UI ->> WorkflowAPI: Create workflow (draft)
+  WorkflowAPI -->> UI: Workflow
+
+  UI ->> CredentialAPI: Create credential
+  CredentialAPI -->> UI: Credential
+
+  alt Auth flow depending on credential type
+    UI --> CredentialAPI: Test credential
+    CredentialAPI --> ExternalAuthServer: Authenticate & Authorize
+  end
+
+  UI ->> WorkflowAPI: Add node definition
+  WorkflowAPI -->> UI: Node definition
+
+  UI ->> WorkflowAPI: Attach credential to node definition
+  WorkflowAPI -->> UI: Node definition
+
+  UI ->> WorkflowAPI: Add edge
+  WorkflowAPI -->> UI: Edge
+
+  UI ->> WorkflowAPI: Complete workflow (ready)
+  WorkflowAPI -->> UI: Workflow
