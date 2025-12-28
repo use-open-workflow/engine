@@ -9,16 +9,22 @@ import (
 	nodeAdapterInbound "use-open-workflow.io/engine/internal/adapter/node/inbound"
 	nodeAdapterOutbound "use-open-workflow.io/engine/internal/adapter/node/outbound"
 	adapterOutbound "use-open-workflow.io/engine/internal/adapter/outbound"
-	"use-open-workflow.io/engine/internal/domain/node/aggregate"
-	"use-open-workflow.io/engine/internal/port/node/inbound"
+	workflowAdapterInbound "use-open-workflow.io/engine/internal/adapter/workflow/inbound"
+	workflowAdapterOutbound "use-open-workflow.io/engine/internal/adapter/workflow/outbound"
+	nodeAggregate "use-open-workflow.io/engine/internal/domain/node/aggregate"
+	workflowAggregate "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+	nodeInbound "use-open-workflow.io/engine/internal/port/node/inbound"
 	"use-open-workflow.io/engine/internal/port/outbound"
+	workflowInbound "use-open-workflow.io/engine/internal/port/workflow/inbound"
 	"use-open-workflow.io/engine/pkg/id"
 )
 
 type Container struct {
 	Pool                     *pgxpool.Pool
-	NodeTemplateReadService  inbound.NodeTemplateReadService
-	NodeTemplateWriteService inbound.NodeTemplateWriteService
+	NodeTemplateReadService  nodeInbound.NodeTemplateReadService
+	NodeTemplateWriteService nodeInbound.NodeTemplateWriteService
+	WorkflowReadService      workflowInbound.WorkflowReadService
+	WorkflowWriteService     workflowInbound.WorkflowWriteService
 	OutboxProcessor          outbound.OutboxProcessor
 }
 
@@ -45,15 +51,19 @@ func NewContainer(ctx context.Context) (*Container, error) {
 
 	// Mappers
 	nodeTemplateInboundMapper := nodeAdapterInbound.NewNodeTemplateMapper()
+	workflowInboundMapper := workflowAdapterInbound.NewWorkflowMapper()
 
-	// Factory
-	nodeTemplateFactory := aggregate.NewNodeTemplateFactory(idFactory)
+	// Factories
+	nodeTemplateFactory := nodeAggregate.NewNodeTemplateFactory(idFactory)
+	workflowFactory := workflowAggregate.NewWorkflowFactory(idFactory)
 
 	// Repository Factories (creates UoW-bound repositories)
 	nodeTemplateReadRepositoryFactory := nodeAdapterOutbound.NewNodeTemplatePostgresReadRepositoryFactory()
 	nodeTemplateWriteRepositoryFactory := nodeAdapterOutbound.NewNodeTemplatePostgresWriteRepositoryFactory()
+	workflowReadRepositoryFactory := workflowAdapterOutbound.NewWorkflowPostgresReadRepositoryFactory()
+	workflowWriteRepositoryFactory := workflowAdapterOutbound.NewWorkflowPostgresWriteRepositoryFactory()
 
-	// Services
+	// Services - NodeTemplate
 	nodeTemplateReadService := nodeAdapterInbound.NewNodeTemplateReadService(
 		uowFactory,
 		nodeTemplateReadRepositoryFactory,
@@ -66,6 +76,22 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		nodeTemplateReadRepositoryFactory,
 		nodeTemplateFactory,
 		nodeTemplateInboundMapper,
+		idFactory,
+	)
+
+	// Services - Workflow
+	workflowReadService := workflowAdapterInbound.NewWorkflowReadService(
+		uowFactory,
+		workflowReadRepositoryFactory,
+		workflowInboundMapper,
+	)
+
+	workflowWriteService := workflowAdapterInbound.NewWorkflowWriteService(
+		uowFactory,
+		workflowWriteRepositoryFactory,
+		workflowReadRepositoryFactory,
+		workflowFactory,
+		workflowInboundMapper,
 		idFactory,
 	)
 
@@ -83,6 +109,8 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		Pool:                     pool,
 		NodeTemplateReadService:  nodeTemplateReadService,
 		NodeTemplateWriteService: nodeTemplateWriteService,
+		WorkflowReadService:      workflowReadService,
+		WorkflowWriteService:     workflowWriteService,
 		OutboxProcessor:          outboxProcessor,
 	}, nil
 }
