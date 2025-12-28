@@ -4,33 +4,40 @@ import (
 	"context"
 
 	"use-open-workflow.io/engine/internal/port/node/inbound"
-	"use-open-workflow.io/engine/internal/port/node/outbound"
+	nodeOutbound "use-open-workflow.io/engine/internal/port/node/outbound"
+	"use-open-workflow.io/engine/internal/port/outbound"
 )
 
 type NodeTemplateReadService struct {
-	nodeTemplateMapper         inbound.NodeTemplateMapper
-	nodeTemplateReadRepository outbound.NodeTemplateReadRepository
+	uowFactory            outbound.UnitOfWorkFactory
+	readRepositoryFactory nodeOutbound.NodeTemplateReadRepositoryFactory
+	mapper                inbound.NodeTemplateMapper
 }
 
 func NewNodeTemplateReadService(
+	uowFactory outbound.UnitOfWorkFactory,
+	readRepositoryFactory nodeOutbound.NodeTemplateReadRepositoryFactory,
 	mapper inbound.NodeTemplateMapper,
-	repository outbound.NodeTemplateReadRepository,
 ) *NodeTemplateReadService {
 	return &NodeTemplateReadService{
-		nodeTemplateMapper:         mapper,
-		nodeTemplateReadRepository: repository,
+		uowFactory:            uowFactory,
+		readRepositoryFactory: readRepositoryFactory,
+		mapper:                mapper,
 	}
 }
 
 func (s *NodeTemplateReadService) List(ctx context.Context) ([]*inbound.NodeTemplateDTO, error) {
-	nodeTemplates, err := s.nodeTemplateReadRepository.FindMany(ctx)
+	uow := s.uowFactory.Create()
+	readRepo := s.readRepositoryFactory.Create(uow)
+
+	nodeTemplates, err := readRepo.FindMany(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	nodeTemplateDTOs := make([]*inbound.NodeTemplateDTO, len(nodeTemplates))
 	for i, v := range nodeTemplates {
-		nodeTemplateDTO, err := s.nodeTemplateMapper.To(v)
+		nodeTemplateDTO, err := s.mapper.To(v)
 		if err != nil {
 			return nil, err
 		}
@@ -41,7 +48,10 @@ func (s *NodeTemplateReadService) List(ctx context.Context) ([]*inbound.NodeTemp
 }
 
 func (s *NodeTemplateReadService) GetByID(ctx context.Context, id string) (*inbound.NodeTemplateDTO, error) {
-	nodeTemplate, err := s.nodeTemplateReadRepository.FindByID(ctx, id)
+	uow := s.uowFactory.Create()
+	readRepo := s.readRepositoryFactory.Create(uow)
+
+	nodeTemplate, err := readRepo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -49,5 +59,5 @@ func (s *NodeTemplateReadService) GetByID(ctx context.Context, id string) (*inbo
 		return nil, nil
 	}
 
-	return s.nodeTemplateMapper.To(nodeTemplate)
+	return s.mapper.To(nodeTemplate)
 }

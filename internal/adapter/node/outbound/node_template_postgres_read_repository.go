@@ -4,23 +4,26 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"use-open-workflow.io/engine/internal/domain/node/aggregate"
+	portOutbound "use-open-workflow.io/engine/internal/port/outbound"
 )
 
 type NodeTemplatePostgresReadRepository struct {
-	pool *pgxpool.Pool
+	uow portOutbound.UnitOfWork
 }
 
-func NewNodeTemplatePostgresReadRepository(pool *pgxpool.Pool) *NodeTemplatePostgresReadRepository {
+func NewNodeTemplatePostgresReadRepository(
+	uow portOutbound.UnitOfWork,
+) *NodeTemplatePostgresReadRepository {
 	return &NodeTemplatePostgresReadRepository{
-		pool: pool,
+		uow: uow,
 	}
 }
 
 func (r *NodeTemplatePostgresReadRepository) FindMany(ctx context.Context) ([]*aggregate.NodeTemplate, error) {
-	rows, err := r.pool.Query(ctx, `
+	q := r.uow.Querier(ctx)
+
+	rows, err := q.Query(ctx, `
 		SELECT id, name, created_at, updated_at
 		FROM node_templates
 		ORDER BY created_at DESC
@@ -50,15 +53,17 @@ func (r *NodeTemplatePostgresReadRepository) FindMany(ctx context.Context) ([]*a
 }
 
 func (r *NodeTemplatePostgresReadRepository) FindByID(ctx context.Context, id string) (*aggregate.NodeTemplate, error) {
+	q := r.uow.Querier(ctx)
+
 	var name string
 	var createdAt, updatedAt interface{}
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT id, name, created_at, updated_at
 		FROM node_templates
 		WHERE id = $1
 	`, id).Scan(&id, &name, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if err != nil && err.Error() == "no rows in result set" {
 		return nil, nil
 	}
 	if err != nil {

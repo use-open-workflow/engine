@@ -49,22 +49,22 @@ func NewContainer(ctx context.Context) (*Container, error) {
 	// Factory
 	nodeTemplateFactory := aggregate.NewNodeTemplateFactory(idFactory)
 
-	// Repositories
-	nodeTemplateReadRepository := nodeAdapterOutbound.NewNodeTemplatePostgresReadRepository(pool)
-	sharedUow := adapterOutbound.NewUnitOfWorkPostgres(pool)
-	nodeTemplateWriteRepository := nodeAdapterOutbound.NewNodeTemplatePostgresWriteRepository(pool, sharedUow)
+	// Repository Factories (creates UoW-bound repositories)
+	nodeTemplateReadRepositoryFactory := nodeAdapterOutbound.NewNodeTemplatePostgresReadRepositoryFactory()
+	nodeTemplateWriteRepositoryFactory := nodeAdapterOutbound.NewNodeTemplatePostgresWriteRepositoryFactory()
 
 	// Services
 	nodeTemplateReadService := nodeAdapterInbound.NewNodeTemplateReadService(
+		uowFactory,
+		nodeTemplateReadRepositoryFactory,
 		nodeTemplateInboundMapper,
-		nodeTemplateReadRepository,
 	)
 
 	nodeTemplateWriteService := nodeAdapterInbound.NewNodeTemplateWriteService(
 		uowFactory,
+		nodeTemplateWriteRepositoryFactory,
+		nodeTemplateReadRepositoryFactory,
 		nodeTemplateFactory,
-		nodeTemplateReadRepository,
-		nodeTemplateWriteRepository,
 		nodeTemplateInboundMapper,
 		idFactory,
 	)

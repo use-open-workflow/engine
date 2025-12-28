@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"use-open-workflow.io/engine/internal/port/outbound"
 	"use-open-workflow.io/engine/pkg/domain"
 )
 
@@ -135,3 +137,74 @@ func (u *UnitOfWorkPostgres) clearAggregateEvents() {
 		aggregate.ClearEvents()
 	}
 }
+
+func (u *UnitOfWorkPostgres) Querier(ctx context.Context) outbound.Querier {
+	if tx, ok := u.GetTx(ctx); ok {
+		return &pgxQuerier{tx: tx}
+	}
+	return &pgxPoolQuerier{pool: u.pool}
+}
+
+type pgxQuerier struct {
+	tx pgx.Tx
+}
+
+func (q *pgxQuerier) Query(ctx context.Context, sql string, args ...any) (outbound.Rows, error) {
+	rows, err := q.tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &pgxRows{rows: rows}, nil
+}
+
+func (q *pgxQuerier) QueryRow(ctx context.Context, sql string, args ...any) outbound.Row {
+	return q.tx.QueryRow(ctx, sql, args...)
+}
+
+func (q *pgxQuerier) Exec(ctx context.Context, sql string, args ...any) (outbound.CommandTag, error) {
+	tag, err := q.tx.Exec(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &pgxCommandTag{tag: tag}, nil
+}
+
+type pgxPoolQuerier struct {
+	pool *pgxpool.Pool
+}
+
+func (q *pgxPoolQuerier) Query(ctx context.Context, sql string, args ...any) (outbound.Rows, error) {
+	rows, err := q.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &pgxRows{rows: rows}, nil
+}
+
+func (q *pgxPoolQuerier) QueryRow(ctx context.Context, sql string, args ...any) outbound.Row {
+	return q.pool.QueryRow(ctx, sql, args...)
+}
+
+func (q *pgxPoolQuerier) Exec(ctx context.Context, sql string, args ...any) (outbound.CommandTag, error) {
+	tag, err := q.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &pgxCommandTag{tag: tag}, nil
+}
+
+type pgxRows struct {
+	rows pgx.Rows
+}
+
+func (r *pgxRows) Close()                 { r.rows.Close() }
+func (r *pgxRows) Err() error             { return r.rows.Err() }
+func (r *pgxRows) Next() bool             { return r.rows.Next() }
+func (r *pgxRows) Scan(dest ...any) error { return r.rows.Scan(dest...) }
+
+// pgxCommandTag wraps pgconn.CommandTag to implement outbound.CommandTag
+type pgxCommandTag struct {
+	tag pgconn.CommandTag
+}
+
+func (t *pgxCommandTag) RowsAffected() int64 { return t.tag.RowsAffected() }
