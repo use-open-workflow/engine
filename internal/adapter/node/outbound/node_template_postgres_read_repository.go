@@ -3,6 +3,7 @@ package outbound
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"use-open-workflow.io/engine/internal/domain/node/aggregate"
 	portOutbound "use-open-workflow.io/engine/internal/port/outbound"
@@ -36,12 +37,12 @@ func (r *NodeTemplatePostgresReadRepository) FindMany(ctx context.Context) ([]*a
 	var templates []*aggregate.NodeTemplate
 	for rows.Next() {
 		var id, name string
-		var createdAt, updatedAt interface{}
+		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&id, &name, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan node template: %w", err)
 		}
 
-		template := aggregate.ReconstituteNodeTemplate(id, name)
+		template := aggregate.ReconstituteNodeTemplate(id, name, createdAt, updatedAt)
 		templates = append(templates, template)
 	}
 
@@ -56,7 +57,7 @@ func (r *NodeTemplatePostgresReadRepository) FindByID(ctx context.Context, id st
 	q := r.uow.Querier(ctx)
 
 	var name string
-	var createdAt, updatedAt interface{}
+	var createdAt, updatedAt time.Time
 	err := q.QueryRow(ctx, `
 		SELECT id, name, created_at, updated_at
 		FROM node_templates
@@ -70,5 +71,5 @@ func (r *NodeTemplatePostgresReadRepository) FindByID(ctx context.Context, id st
 		return nil, fmt.Errorf("failed to query node template: %w", err)
 	}
 
-	return aggregate.ReconstituteNodeTemplate(id, name), nil
+	return aggregate.ReconstituteNodeTemplate(id, name, createdAt, updatedAt), nil
 }

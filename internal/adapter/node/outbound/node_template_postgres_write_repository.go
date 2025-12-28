@@ -25,8 +25,8 @@ func (r *NodeTemplatePostgresWriteRepository) Save(ctx context.Context, nodeTemp
 
 	_, err := q.Exec(ctx, `
 		INSERT INTO node_templates (id, name, created_at, updated_at)
-		VALUES ($1, $2, NOW(), NOW())
-	`, nodeTemplate.ID, nodeTemplate.Name)
+		VALUES ($1, $2, $3, $4)
+	`, nodeTemplate.ID, nodeTemplate.Name, nodeTemplate.CreatedAt, nodeTemplate.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save node template: %w", err)
@@ -42,9 +42,9 @@ func (r *NodeTemplatePostgresWriteRepository) Update(ctx context.Context, nodeTe
 
 	_, err := q.Exec(ctx, `
 		UPDATE node_templates
-		SET name = $1, updated_at = NOW()
-		WHERE id = $2
-	`, nodeTemplate.Name, nodeTemplate.ID)
+		SET name = $1, updated_at = $2
+		WHERE id = $3
+	`, nodeTemplate.Name, nodeTemplate.UpdatedAt, nodeTemplate.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update node template: %w", err)

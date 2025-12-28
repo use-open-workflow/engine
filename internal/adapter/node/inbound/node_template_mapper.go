@@ -13,7 +13,9 @@ func NewNodeTemplateMapper() *NodeTemplateMapper {
 
 func (m *NodeTemplateMapper) To(nodeTemplate *aggregate.NodeTemplate) (*inbound.NodeTemplateDTO, error) {
 	return &inbound.NodeTemplateDTO{
-		ID:   nodeTemplate.ID,
-		Name: nodeTemplate.Name,
+		ID:        nodeTemplate.ID,
+		Name:      nodeTemplate.Name,
+		CreatedAt: nodeTemplate.CreatedAt,
+		UpdatedAt: nodeTemplate.UpdatedAt,
 	}, nil
 }
