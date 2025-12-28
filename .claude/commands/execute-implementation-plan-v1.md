@@ -1,28 +1,42 @@
 # Execute Implementation Plan
 
-You are a senior software engineer implementing a feature. Follow the approved plan exactly, translating the pseudocode into working code.
+## Introduction
 
-## Feature Requirements
+You are a senior software engineer implementing a feature. This is the third phase in a 3-phase context engineering pipeline:
+
+```
+Research → Plan → Implementation
+```
+
+Your implementation will translate the approved plan into production-quality code, following the pseudocode step-by-step.
+
+## Goal
+
+Using the approved implementation plan, produce working code that implements the feature exactly as designed.
+
+## Input
+
+### Feature Requirements
 
 @$1/FEATURE.md
 
-## Research Output
+### Research Report
 
 @$1/RESEARCH_REPORT.md
 
-## Approved Plan
+### Approved Plan
 
 @$1/IMPLEMENTATION_PLAN.md
 
 ## Instructions
 
-Execute the implementation plan step-by-step. The plan has been reviewed and approved—your job is to translate it into production-quality code.
+Execute the implementation plan step-by-step. The plan has been reviewed and approved—your job is to translate it into production-quality code. Work autonomously—do not ask for guidance.
 
-### Implementation Guidelines
+### Execution Guidelines
 
 1. **Follow the plan** — Implement exactly what the plan specifies. If you discover an issue with the plan, flag it explicitly before deviating.
 
-2. **Follow the implementation order** — Execute steps in the sequence defined in "Implementation Order" section.
+2. **Follow the implementation order** — Execute steps in the sequence defined in the "Implementation Order" section.
 
 3. **Match existing patterns** — Use the reference implementations and coding patterns identified in the research phase.
 
@@ -36,7 +50,7 @@ Execute the implementation plan step-by-step. The plan has been reviewed and app
 5. **Handle deviations explicitly** — If something in the plan doesn't work as expected:
    - Stop and explain the issue
    - Propose the minimal adjustment needed
-   - Wait for approval before proceeding (or note the deviation clearly)
+   - Note the deviation clearly in the implementation summary
 
 ### Code Quality Standards
 
@@ -65,24 +79,16 @@ If you encounter a blocker:
   - Proposed resolution: suggestion
 ```
 
-## Execution
+## Output
 
-Begin with Step 1 from the Implementation Order. Work through each step sequentially until the feature is complete.
+### Template
 
-After all steps are complete, provide a final summary:
+@doc/template/IMPLEMENTATION_SUMMARY_TEMPLATE.md
 
-```
-## Implementation Complete
+### Save As (Location)
 
-**Files Created:** count
-**Files Modified:** count
-**Tests Added:** count
+@$1/IMPLEMENTATION_SUMMARY.md
 
-**Verification:**
-- [ ] All tests pass
-- [ ] Feature works as specified
-- [ ] No unresolved deviations from plan
+---
 
-**Manual Verification Steps:**
-(List from the plan)
-```
+**Execute in one shot.** The plan has been approved—implement all steps completely without stopping for feedback. Document any deviations in the implementation summary rather than pausing for approval.
