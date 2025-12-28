@@ -4,7 +4,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
-	"use-open-workflow.io/engine/api/node/http"
+	nodeHttp "use-open-workflow.io/engine/api/node/http"
+	workflowHttp "use-open-workflow.io/engine/api/workflow/http"
 	"use-open-workflow.io/engine/di"
 )
 
@@ -18,12 +19,13 @@ func SetupRouter(c *di.Container) *fiber.App {
 
 	api := app.Group("/api/v1")
 	registerNodeTemplateRoutes(api, c)
+	registerWorkflowRoutes(api, c)
 
 	return app
 }
 
 func registerNodeTemplateRoutes(router fiber.Router, c *di.Container) {
-	nodeTemplateHandler := http.NewNodeTemplateHandler(
+	nodeTemplateHandler := nodeHttp.NewNodeTemplateHandler(
 		c.NodeTemplateReadService,
 		c.NodeTemplateWriteService,
 	)
@@ -34,4 +36,26 @@ func registerNodeTemplateRoutes(router fiber.Router, c *di.Container) {
 	nodeTemplate.Post("/", nodeTemplateHandler.Create)
 	nodeTemplate.Put("/:id", nodeTemplateHandler.Update)
 	nodeTemplate.Delete("/:id", nodeTemplateHandler.Delete)
+}
+
+func registerWorkflowRoutes(router fiber.Router, c *di.Container) {
+	workflowHandler := workflowHttp.NewWorkflowHandler(
+		c.WorkflowReadService,
+		c.WorkflowWriteService,
+	)
+
+	workflow := router.Group("/workflow")
+	workflow.Get("/", workflowHandler.List)
+	workflow.Get("/:id", workflowHandler.GetByID)
+	workflow.Post("/", workflowHandler.Create)
+	workflow.Put("/:id", workflowHandler.Update)
+	workflow.Delete("/:id", workflowHandler.Delete)
+
+	// Node definition routes
+	workflow.Post("/:id/node", workflowHandler.AddNodeDefinition)
+	workflow.Delete("/:id/node/:nodeId", workflowHandler.RemoveNodeDefinition)
+
+	// Edge routes
+	workflow.Post("/:id/edge", workflowHandler.AddEdge)
+	workflow.Delete("/:id/edge/:edgeId", workflowHandler.RemoveEdge)
 }
