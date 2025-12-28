@@ -48,7 +48,7 @@ Explore the codebase systematically to understand everything needed to implement
 
 @doc/template/RESEARCH_REPORT_TEMPLATE.md
 
-### Save As (Report Location)
+### Save As (Location)
 
 @$1/RESEARCH_REPORT.md
 
