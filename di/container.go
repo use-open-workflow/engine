@@ -9,9 +9,13 @@ import (
 	nodeAdapterInbound "use-open-workflow.io/engine/internal/adapter/node/inbound"
 	nodeAdapterOutbound "use-open-workflow.io/engine/internal/adapter/node/outbound"
 	adapterOutbound "use-open-workflow.io/engine/internal/adapter/outbound"
+	workflowAdapterInbound "use-open-workflow.io/engine/internal/adapter/workflow/inbound"
+	workflowAdapterOutbound "use-open-workflow.io/engine/internal/adapter/workflow/outbound"
 	"use-open-workflow.io/engine/internal/domain/node/aggregate"
+	workflowAggregate "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
 	"use-open-workflow.io/engine/internal/port/node/inbound"
 	"use-open-workflow.io/engine/internal/port/outbound"
+	workflowInbound "use-open-workflow.io/engine/internal/port/workflow/inbound"
 	"use-open-workflow.io/engine/pkg/id"
 )
 
@@ -19,6 +23,8 @@ type Container struct {
 	Pool                     *pgxpool.Pool
 	NodeTemplateReadService  inbound.NodeTemplateReadService
 	NodeTemplateWriteService inbound.NodeTemplateWriteService
+	WorkflowReadService      workflowInbound.WorkflowReadService
+	WorkflowWriteService     workflowInbound.WorkflowWriteService
 	OutboxProcessor          outbound.OutboxProcessor
 }
 
@@ -69,6 +75,34 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		idFactory,
 	)
 
+	// === WORKFLOW DOMAIN WIRING ===
+
+	// Mappers
+	workflowMapper := workflowAdapterInbound.NewWorkflowMapper()
+
+	// Factory
+	workflowFactory := workflowAggregate.NewWorkflowFactory(idFactory)
+
+	// Repository Factories
+	workflowReadRepositoryFactory := workflowAdapterOutbound.NewWorkflowPostgresReadRepositoryFactory()
+	workflowWriteRepositoryFactory := workflowAdapterOutbound.NewWorkflowPostgresWriteRepositoryFactory()
+
+	// Services
+	workflowReadService := workflowAdapterInbound.NewWorkflowReadService(
+		uowFactory,
+		workflowReadRepositoryFactory,
+		workflowMapper,
+	)
+
+	workflowWriteService := workflowAdapterInbound.NewWorkflowWriteService(
+		uowFactory,
+		workflowWriteRepositoryFactory,
+		workflowReadRepositoryFactory,
+		workflowFactory,
+		workflowMapper,
+		idFactory,
+	)
+
 	outboxReadRepository := adapterOutbound.NewOutboxPostgresReadRepository(pool)
 	outboxWriteRepository := adapterOutbound.NewOutboxPostgresWriteRepository(pool)
 	eventPublisher := adapterOutbound.NewOutboxNoopEventPublisher()
@@ -83,6 +117,8 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		Pool:                     pool,
 		NodeTemplateReadService:  nodeTemplateReadService,
 		NodeTemplateWriteService: nodeTemplateWriteService,
+		WorkflowReadService:      workflowReadService,
+		WorkflowWriteService:     workflowWriteService,
 		OutboxProcessor:          outboxProcessor,
 	}, nil
 }
