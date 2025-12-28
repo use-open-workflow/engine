@@ -1,52 +1,52 @@
-# Implementation Plan: Workflow Domain
+# Implementation Plan
 
 ## 1. Implementation Summary
 
-This plan implements the `workflow` domain following the established hexagonal architecture with DDD patterns. The Workflow aggregate contains two child entities (NodeDefinition and Edge) that are managed together as a single transactional unit. The implementation follows the existing NodeTemplate domain patterns for services, repositories, and handlers, with additional complexity for parent-child entity relationships in database operations.
-
----
+Implement the Workflow domain with three related components: Workflow (aggregate), NodeDefinition (entity), and Edge (entity). The Workflow aggregate owns both NodeDefinition and Edge collections. NodeDefinition references a NodeTemplate by ID, and Edge connects two NodeDefinition IDs (from/to) within the same Workflow. Following the established hexagonal architecture patterns, we will create domain models, ports (inbound/outbound), adapters, HTTP handlers, and wire everything through the DI container.
 
 ## 2. Change Manifest
 
 ```
 CREATE:
-- internal/domain/workflow/aggregate/workflow.go — Workflow aggregate root with child entities
-- internal/domain/workflow/aggregate/workflow_factory.go — Factory for creating Workflow aggregates
-- internal/domain/workflow/aggregate/node_definition.go — NodeDefinition entity
-- internal/domain/workflow/aggregate/edge.go — Edge entity
-- internal/domain/workflow/event/create_workflow.go — Domain event for workflow creation
-- internal/domain/workflow/event/update_workflow.go — Domain event for workflow updates
+- migration/002_workflow_schema.sql — Database schema for workflow, node_definition, edge tables
 
-- internal/port/workflow/inbound/workflow_dto.go — DTOs for Workflow, NodeDefinition, Edge
+- internal/domain/workflow/aggregate/workflow.go — Workflow aggregate with embedded entities
+- internal/domain/workflow/aggregate/workflow_factory.go — Factory for Workflow creation
+- internal/domain/workflow/entity/node_definition.go — NodeDefinition entity
+- internal/domain/workflow/entity/edge.go — Edge entity
+- internal/domain/workflow/event/create_workflow.go — CreateWorkflow domain event
+- internal/domain/workflow/event/update_workflow.go — UpdateWorkflow domain event
+- internal/domain/workflow/event/add_node_definition.go — AddNodeDefinition domain event
+- internal/domain/workflow/event/remove_node_definition.go — RemoveNodeDefinition domain event
+- internal/domain/workflow/event/add_edge.go — AddEdge domain event
+- internal/domain/workflow/event/remove_edge.go — RemoveEdge domain event
+
+- internal/port/workflow/inbound/workflow_dto.go — DTOs for workflow, node_definition, edge
 - internal/port/workflow/inbound/workflow_read_service.go — Read service interface
-- internal/port/workflow/inbound/workflow_write_service.go — Write service interface with input structs
-- internal/port/workflow/inbound/workflow_mapper.go — Mapper interface (aggregate → DTO)
+- internal/port/workflow/inbound/workflow_write_service.go — Write service interface
+- internal/port/workflow/inbound/workflow_mapper.go — Mapper interface
 
 - internal/port/workflow/outbound/workflow_model.go — Database models
 - internal/port/workflow/outbound/workflow_read_repository.go — Read repository interface
 - internal/port/workflow/outbound/workflow_write_repository.go — Write repository interface
-- internal/port/workflow/outbound/workflow_read_repository_factory.go — Factory interface
-- internal/port/workflow/outbound/workflow_write_repository_factory.go — Factory interface
+- internal/port/workflow/outbound/workflow_read_repository_factory.go — Read repository factory interface
+- internal/port/workflow/outbound/workflow_write_repository_factory.go — Write repository factory interface
 
 - internal/adapter/workflow/inbound/workflow_read_service.go — Read service implementation
 - internal/adapter/workflow/inbound/workflow_write_service.go — Write service implementation
 - internal/adapter/workflow/inbound/workflow_mapper.go — Mapper implementation
 
-- internal/adapter/workflow/outbound/workflow_postgres_read_repository.go — PostgreSQL read impl
-- internal/adapter/workflow/outbound/workflow_postgres_write_repository.go — PostgreSQL write impl
-- internal/adapter/workflow/outbound/workflow_postgres_read_repository_factory.go — Factory impl
-- internal/adapter/workflow/outbound/workflow_postgres_write_repository_factory.go — Factory impl
+- internal/adapter/workflow/outbound/workflow_postgres_read_repository.go — PostgreSQL read repository
+- internal/adapter/workflow/outbound/workflow_postgres_write_repository.go — PostgreSQL write repository
+- internal/adapter/workflow/outbound/workflow_postgres_read_repository_factory.go — Read repository factory
+- internal/adapter/workflow/outbound/workflow_postgres_write_repository_factory.go — Write repository factory
 
-- api/workflow/http/workflow_handler.go — HTTP handlers for workflow operations
-
-- migration/002_workflow_schema.sql — Database schema for workflow tables
+- api/workflow/http/workflow_handler.go — HTTP handlers for workflow CRUD
 
 MODIFY:
-- api/router.go — Register workflow routes
-- di/container.go — Wire up workflow services and dependencies
+- api/router.go — Add registerWorkflowRoutes() function
+- di/container.go — Add WorkflowReadService, WorkflowWriteService fields and wiring
 ```
-
----
 
 ## 3. Step-by-Step Plan
 
@@ -56,460 +56,263 @@ MODIFY:
 
 **Action:** CREATE
 
-**Rationale:** Database tables must exist before any domain code can persist data.
+**Rationale:** Define the database schema for workflow, node_definition, and edge tables with proper foreign key constraints.
 
 **Pseudocode:**
 
 ```sql
--- Workflow table (aggregate root)
-CREATE TABLE workflow (
-    id VARCHAR(26) PRIMARY KEY,           -- ULID
-    name VARCHAR(255) NOT NULL,           -- Workflow name
+-- Workflow table
+CREATE TABLE IF NOT EXISTS workflow (
+    id VARCHAR(26) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Index for listing workflows by creation date
-CREATE INDEX idx_workflow_created_at ON workflow(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_created_at ON workflow(created_at DESC);
 
--- NodeDefinition table (child entity of Workflow)
-CREATE TABLE node_definition (
-    id VARCHAR(26) PRIMARY KEY,           -- ULID
-    workflow_id VARCHAR(26) NOT NULL,     -- Parent workflow reference
-    node_template_id VARCHAR(26) NOT NULL,-- Reference to node_template
-    name VARCHAR(255) NOT NULL,           -- Display name for this node instance
-    position_x DOUBLE PRECISION NOT NULL DEFAULT 0,  -- Canvas X position
-    position_y DOUBLE PRECISION NOT NULL DEFAULT 0,  -- Canvas Y position
-
-    CONSTRAINT fk_node_definition_workflow
-        FOREIGN KEY (workflow_id) REFERENCES workflow(id) ON DELETE CASCADE,
-    CONSTRAINT fk_node_definition_node_template
-        FOREIGN KEY (node_template_id) REFERENCES node_template(id)
+-- NodeDefinition table (belongs to Workflow)
+CREATE TABLE IF NOT EXISTS node_definition (
+    id VARCHAR(26) PRIMARY KEY,
+    workflow_id VARCHAR(26) NOT NULL REFERENCES workflow(id) ON DELETE CASCADE,
+    node_template_id VARCHAR(26) NOT NULL REFERENCES node_template(id),
+    name VARCHAR(255) NOT NULL,
+    config JSONB,
+    position_x DOUBLE PRECISION NOT NULL DEFAULT 0,
+    position_y DOUBLE PRECISION NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Index for finding node definitions by workflow
-CREATE INDEX idx_node_definition_workflow_id ON node_definition(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_node_definition_workflow_id ON node_definition(workflow_id);
 
--- Edge table (child entity of Workflow, connects NodeDefinitions)
-CREATE TABLE edge (
-    id VARCHAR(26) PRIMARY KEY,           -- ULID
-    workflow_id VARCHAR(26) NOT NULL,     -- Parent workflow reference
-    from_node_id VARCHAR(26) NOT NULL,    -- Source NodeDefinition
-    to_node_id VARCHAR(26) NOT NULL,      -- Target NodeDefinition
+-- Edge table (connects NodeDefinitions within a Workflow)
+CREATE TABLE IF NOT EXISTS edge (
+    id VARCHAR(26) PRIMARY KEY,
+    workflow_id VARCHAR(26) NOT NULL REFERENCES workflow(id) ON DELETE CASCADE,
+    from_node_definition_id VARCHAR(26) NOT NULL REFERENCES node_definition(id) ON DELETE CASCADE,
+    to_node_definition_id VARCHAR(26) NOT NULL REFERENCES node_definition(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT fk_edge_workflow
-        FOREIGN KEY (workflow_id) REFERENCES workflow(id) ON DELETE CASCADE,
-    CONSTRAINT fk_edge_from_node
-        FOREIGN KEY (from_node_id) REFERENCES node_definition(id) ON DELETE CASCADE,
-    CONSTRAINT fk_edge_to_node
-        FOREIGN KEY (to_node_id) REFERENCES node_definition(id) ON DELETE CASCADE,
-
-    -- Prevent duplicate edges between same nodes
-    CONSTRAINT uq_edge_from_to UNIQUE (workflow_id, from_node_id, to_node_id)
+    -- Prevent duplicate edges
+    CONSTRAINT unique_edge UNIQUE (workflow_id, from_node_definition_id, to_node_definition_id),
+    -- Prevent self-loops
+    CONSTRAINT no_self_loop CHECK (from_node_definition_id != to_node_definition_id)
 );
 
--- Index for finding edges by workflow
-CREATE INDEX idx_edge_workflow_id ON edge(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_edge_workflow_id ON edge(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_edge_from_node ON edge(from_node_definition_id);
+CREATE INDEX IF NOT EXISTS idx_edge_to_node ON edge(to_node_definition_id);
 ```
 
-**Dependencies:** PostgreSQL database, migration/001_initial_schema.sql must be applied first
+**Dependencies:** None
 
 **Tests Required:**
-- Verify tables are created successfully
-- Verify foreign key constraints work (cascade delete)
-- Verify unique constraint on edges prevents duplicates
+- Manual verification: Run migration against database
 
 ---
 
 ### Step 2: Create NodeDefinition Entity
 
-**File:** `internal/domain/workflow/aggregate/node_definition.go`
+**File:** `internal/domain/workflow/entity/node_definition.go`
 
 **Action:** CREATE
 
-**Rationale:** NodeDefinition is a child entity of Workflow representing an instance of a node template.
+**Rationale:** NodeDefinition entity represents a node instance within a workflow, referencing a NodeTemplate.
 
 **Pseudocode:**
 
 ```go
-package aggregate
+package entity
 
-import "use-open-workflow.io/engine/pkg/domain"
+import (
+    "time"
+    "use-open-workflow.io/engine/pkg/domain"
+)
 
-// NodeDefinition represents an instance of a NodeTemplate within a Workflow.
-// It is a child entity owned by the Workflow aggregate.
+// NodeDefinition represents a node instance within a workflow
 type NodeDefinition struct {
     domain.BaseEntity
-    WorkflowID     string   // Parent workflow ID
-    NodeTemplateID string   // Reference to the template this node is based on
-    Name           string   // Display name for this node instance
-    PositionX      float64  // X position on the workflow canvas
-    PositionY      float64  // Y position on the workflow canvas
+    WorkflowID     string
+    NodeTemplateID string
+    Name           string
+    Config         map[string]interface{}  // JSONB config
+    PositionX      float64
+    PositionY      float64
+    CreatedAt      time.Time
+    UpdatedAt      time.Time
 }
 
-// newNodeDefinition creates a new NodeDefinition entity.
-// Called internally by Workflow.AddNodeDefinition()
-func newNodeDefinition(id, workflowID, nodeTemplateID, name string, posX, posY float64) *NodeDefinition {
+// NewNodeDefinition creates a new NodeDefinition
+// Parameters:
+//   - id: ULID for this entity
+//   - workflowID: parent workflow ID
+//   - nodeTemplateID: reference to NodeTemplate
+//   - name: display name for this node
+//   - config: node-specific configuration (can be nil)
+//   - positionX, positionY: visual position on canvas
+func NewNodeDefinition(
+    id string,
+    workflowID string,
+    nodeTemplateID string,
+    name string,
+    config map[string]interface{},
+    positionX float64,
+    positionY float64,
+) *NodeDefinition {
+    now := time.Now().UTC()
     return &NodeDefinition{
         BaseEntity:     domain.NewBaseEntity(id),
         WorkflowID:     workflowID,
         NodeTemplateID: nodeTemplateID,
         Name:           name,
-        PositionX:      posX,
-        PositionY:      posY,
+        Config:         config,
+        PositionX:      positionX,
+        PositionY:      positionY,
+        CreatedAt:      now,
+        UpdatedAt:      now,
     }
 }
 
-// ReconstituteNodeDefinition recreates a NodeDefinition from persistence.
-// Used by repository when loading from database.
-func ReconstituteNodeDefinition(id, workflowID, nodeTemplateID, name string, posX, posY float64) *NodeDefinition {
+// ReconstituteNodeDefinition recreates entity from database
+func ReconstituteNodeDefinition(
+    id string,
+    workflowID string,
+    nodeTemplateID string,
+    name string,
+    config map[string]interface{},
+    positionX float64,
+    positionY float64,
+    createdAt time.Time,
+    updatedAt time.Time,
+) *NodeDefinition {
     return &NodeDefinition{
         BaseEntity:     domain.NewBaseEntity(id),
         WorkflowID:     workflowID,
         NodeTemplateID: nodeTemplateID,
         Name:           name,
-        PositionX:      posX,
-        PositionY:      posY,
+        Config:         config,
+        PositionX:      positionX,
+        PositionY:      positionY,
+        CreatedAt:      createdAt,
+        UpdatedAt:      updatedAt,
     }
 }
 
-// UpdatePosition updates the node's canvas position
+// UpdatePosition updates the visual position
 func (n *NodeDefinition) UpdatePosition(x, y float64) {
     n.PositionX = x
     n.PositionY = y
+    n.UpdatedAt = time.Now().UTC()
 }
 
-// UpdateName updates the node's display name
+// UpdateConfig updates the node configuration
+func (n *NodeDefinition) UpdateConfig(config map[string]interface{}) {
+    n.Config = config
+    n.UpdatedAt = time.Now().UTC()
+}
+
+// UpdateName updates the display name
 func (n *NodeDefinition) UpdateName(name string) {
     n.Name = name
+    n.UpdatedAt = time.Now().UTC()
 }
 ```
 
-**Dependencies:** `pkg/domain` (BaseEntity)
+**Dependencies:**
+- `use-open-workflow.io/engine/pkg/domain`
 
 **Tests Required:**
-- Test newNodeDefinition creates entity with correct fields
-- Test ReconstituteNodeDefinition recreates entity from persistence data
-- Test UpdatePosition modifies coordinates
-- Test UpdateName modifies name
+- Test NewNodeDefinition creates entity with correct timestamps
+- Test ReconstituteNodeDefinition preserves all fields
+- Test UpdatePosition updates position and timestamp
+- Test UpdateConfig updates config and timestamp
 
 ---
 
 ### Step 3: Create Edge Entity
 
-**File:** `internal/domain/workflow/aggregate/edge.go`
+**File:** `internal/domain/workflow/entity/edge.go`
 
 **Action:** CREATE
 
-**Rationale:** Edge is a child entity representing connections between NodeDefinitions within a Workflow.
+**Rationale:** Edge entity connects two NodeDefinition entities within a workflow.
 
 **Pseudocode:**
 
 ```go
-package aggregate
-
-import "use-open-workflow.io/engine/pkg/domain"
-
-// Edge represents a directed connection between two NodeDefinitions.
-// It is a child entity owned by the Workflow aggregate.
-type Edge struct {
-    domain.BaseEntity
-    WorkflowID string  // Parent workflow ID
-    FromNodeID string  // Source NodeDefinition ID
-    ToNodeID   string  // Target NodeDefinition ID
-}
-
-// newEdge creates a new Edge entity.
-// Called internally by Workflow.AddEdge()
-func newEdge(id, workflowID, fromNodeID, toNodeID string) *Edge {
-    return &Edge{
-        BaseEntity: domain.NewBaseEntity(id),
-        WorkflowID: workflowID,
-        FromNodeID: fromNodeID,
-        ToNodeID:   toNodeID,
-    }
-}
-
-// ReconstituteEdge recreates an Edge from persistence.
-// Used by repository when loading from database.
-func ReconstituteEdge(id, workflowID, fromNodeID, toNodeID string) *Edge {
-    return &Edge{
-        BaseEntity: domain.NewBaseEntity(id),
-        WorkflowID: workflowID,
-        FromNodeID: fromNodeID,
-        ToNodeID:   toNodeID,
-    }
-}
-```
-
-**Dependencies:** `pkg/domain` (BaseEntity)
-
-**Tests Required:**
-- Test newEdge creates entity with correct fields
-- Test ReconstituteEdge recreates entity from persistence data
-
----
-
-### Step 4: Create Workflow Aggregate
-
-**File:** `internal/domain/workflow/aggregate/workflow.go`
-
-**Action:** CREATE
-
-**Rationale:** Workflow is the aggregate root that owns NodeDefinitions and Edges.
-
-**Pseudocode:**
-
-```go
-package aggregate
+package entity
 
 import (
-    "errors"
     "time"
-
-    "use-open-workflow.io/engine/internal/domain/workflow/event"
     "use-open-workflow.io/engine/pkg/domain"
-    "use-open-workflow.io/engine/pkg/id"
 )
 
-// Domain errors
-var (
-    ErrNodeDefinitionNotFound = errors.New("node definition not found in workflow")
-    ErrEdgeAlreadyExists      = errors.New("edge already exists between these nodes")
-    ErrSelfLoopNotAllowed     = errors.New("edge cannot connect a node to itself")
-)
-
-// Workflow is the aggregate root for the workflow domain.
-// It contains NodeDefinitions and Edges as child entities.
-type Workflow struct {
-    domain.BaseAggregate
-    Name            string
-    NodeDefinitions []*NodeDefinition
-    Edges           []*Edge
+// Edge connects two NodeDefinitions within a Workflow
+type Edge struct {
+    domain.BaseEntity
+    WorkflowID           string
+    FromNodeDefinitionID string
+    ToNodeDefinitionID   string
+    CreatedAt            time.Time
 }
 
-// newWorkflow creates a new Workflow aggregate.
-// Private - use WorkflowFactory.Make() instead.
-func newWorkflow(idFactory id.Factory, aggregateID, name string) *Workflow {
-    w := &Workflow{
-        BaseAggregate:   domain.NewBaseAggregate(aggregateID),
-        Name:            name,
-        NodeDefinitions: make([]*NodeDefinition, 0),
-        Edges:           make([]*Edge, 0),
-    }
-    w.AddEvent(event.NewCreateWorkflow(idFactory, w.ID, name))
-    return w
-}
-
-// ReconstituteWorkflow recreates a Workflow from persistence.
-// NodeDefinitions and Edges should be set separately after reconstitution.
-func ReconstituteWorkflow(
-    aggregateID, name string,
-    createdAt, updatedAt time.Time,
-    nodeDefinitions []*NodeDefinition,
-    edges []*Edge,
-) *Workflow {
-    return &Workflow{
-        BaseAggregate:   domain.ReconstituteBaseAggregate(aggregateID, createdAt, updatedAt),
-        Name:            name,
-        NodeDefinitions: nodeDefinitions,
-        Edges:           edges,
+// NewEdge creates a new Edge
+// Parameters:
+//   - id: ULID for this entity
+//   - workflowID: parent workflow ID
+//   - fromNodeDefinitionID: source node definition
+//   - toNodeDefinitionID: target node definition
+func NewEdge(
+    id string,
+    workflowID string,
+    fromNodeDefinitionID string,
+    toNodeDefinitionID string,
+) *Edge {
+    return &Edge{
+        BaseEntity:           domain.NewBaseEntity(id),
+        WorkflowID:           workflowID,
+        FromNodeDefinitionID: fromNodeDefinitionID,
+        ToNodeDefinitionID:   toNodeDefinitionID,
+        CreatedAt:            time.Now().UTC(),
     }
 }
 
-// UpdateName updates the workflow name and emits an event.
-func (w *Workflow) UpdateName(idFactory id.Factory, name string) {
-    w.Name = name
-    w.SetUpdatedAt(time.Now().UTC())
-    w.AddEvent(event.NewUpdateWorkflow(idFactory, w.ID, name))
-}
-
-// AddNodeDefinition adds a new node definition to the workflow.
-func (w *Workflow) AddNodeDefinition(idFactory id.Factory, nodeTemplateID, name string, posX, posY float64) *NodeDefinition {
-    nodeID := idFactory.New()
-    node := newNodeDefinition(nodeID, w.ID, nodeTemplateID, name, posX, posY)
-    w.NodeDefinitions = append(w.NodeDefinitions, node)
-    w.SetUpdatedAt(time.Now().UTC())
-    return node
-}
-
-// RemoveNodeDefinition removes a node definition and all its connected edges.
-func (w *Workflow) RemoveNodeDefinition(nodeID string) error {
-    // 1. Find the node
-    found := false
-    newNodes := make([]*NodeDefinition, 0, len(w.NodeDefinitions))
-    for _, node := range w.NodeDefinitions {
-        if node.ID == nodeID {
-            found = true
-            continue // Skip this node (remove it)
-        }
-        newNodes = append(newNodes, node)
+// ReconstituteEdge recreates entity from database
+func ReconstituteEdge(
+    id string,
+    workflowID string,
+    fromNodeDefinitionID string,
+    toNodeDefinitionID string,
+    createdAt time.Time,
+) *Edge {
+    return &Edge{
+        BaseEntity:           domain.NewBaseEntity(id),
+        WorkflowID:           workflowID,
+        FromNodeDefinitionID: fromNodeDefinitionID,
+        ToNodeDefinitionID:   toNodeDefinitionID,
+        CreatedAt:            createdAt,
     }
-    if !found {
-        return ErrNodeDefinitionNotFound
-    }
-
-    // 2. Remove all edges connected to this node
-    newEdges := make([]*Edge, 0, len(w.Edges))
-    for _, edge := range w.Edges {
-        if edge.FromNodeID == nodeID || edge.ToNodeID == nodeID {
-            continue // Skip edges connected to removed node
-        }
-        newEdges = append(newEdges, edge)
-    }
-
-    w.NodeDefinitions = newNodes
-    w.Edges = newEdges
-    w.SetUpdatedAt(time.Now().UTC())
-    return nil
-}
-
-// AddEdge adds a new edge connecting two node definitions.
-func (w *Workflow) AddEdge(idFactory id.Factory, fromNodeID, toNodeID string) (*Edge, error) {
-    // 1. Validate: no self-loops
-    if fromNodeID == toNodeID {
-        return nil, ErrSelfLoopNotAllowed
-    }
-
-    // 2. Validate: both nodes exist in this workflow
-    fromExists := false
-    toExists := false
-    for _, node := range w.NodeDefinitions {
-        if node.ID == fromNodeID {
-            fromExists = true
-        }
-        if node.ID == toNodeID {
-            toExists = true
-        }
-    }
-    if !fromExists || !toExists {
-        return nil, ErrNodeDefinitionNotFound
-    }
-
-    // 3. Validate: edge doesn't already exist
-    for _, edge := range w.Edges {
-        if edge.FromNodeID == fromNodeID && edge.ToNodeID == toNodeID {
-            return nil, ErrEdgeAlreadyExists
-        }
-    }
-
-    // 4. Create and add edge
-    edgeID := idFactory.New()
-    edge := newEdge(edgeID, w.ID, fromNodeID, toNodeID)
-    w.Edges = append(w.Edges, edge)
-    w.SetUpdatedAt(time.Now().UTC())
-    return edge, nil
-}
-
-// RemoveEdge removes an edge by ID.
-func (w *Workflow) RemoveEdge(edgeID string) error {
-    found := false
-    newEdges := make([]*Edge, 0, len(w.Edges))
-    for _, edge := range w.Edges {
-        if edge.ID == edgeID {
-            found = true
-            continue
-        }
-        newEdges = append(newEdges, edge)
-    }
-    if !found {
-        return errors.New("edge not found")
-    }
-    w.Edges = newEdges
-    w.SetUpdatedAt(time.Now().UTC())
-    return nil
-}
-
-// FindNodeDefinition finds a node definition by ID.
-func (w *Workflow) FindNodeDefinition(nodeID string) *NodeDefinition {
-    for _, node := range w.NodeDefinitions {
-        if node.ID == nodeID {
-            return node
-        }
-    }
-    return nil
-}
-
-// FindEdge finds an edge by ID.
-func (w *Workflow) FindEdge(edgeID string) *Edge {
-    for _, edge := range w.Edges {
-        if edge.ID == edgeID {
-            return edge
-        }
-    }
-    return nil
 }
 ```
 
-**Dependencies:** `pkg/domain`, `pkg/id`, `internal/domain/workflow/event`
+**Dependencies:**
+- `use-open-workflow.io/engine/pkg/domain`
 
 **Tests Required:**
-- Test newWorkflow creates aggregate with event
-- Test ReconstituteWorkflow recreates aggregate without events
-- Test UpdateName modifies name and adds event
-- Test AddNodeDefinition adds node to slice
-- Test RemoveNodeDefinition removes node and cascades to edges
-- Test AddEdge validates nodes exist and no duplicates
-- Test AddEdge rejects self-loops
-- Test RemoveEdge removes edge by ID
-- Test FindNodeDefinition returns correct node or nil
-- Test FindEdge returns correct edge or nil
+- Test NewEdge creates entity with correct fields
+- Test ReconstituteEdge preserves all fields
 
 ---
 
-### Step 5: Create Workflow Factory
-
-**File:** `internal/domain/workflow/aggregate/workflow_factory.go`
-
-**Action:** CREATE
-
-**Rationale:** Factory encapsulates aggregate creation and ID generation.
-
-**Pseudocode:**
-
-```go
-package aggregate
-
-import "use-open-workflow.io/engine/pkg/id"
-
-// WorkflowFactory creates new Workflow aggregates.
-type WorkflowFactory struct {
-    idFactory id.Factory
-}
-
-// NewWorkflowFactory creates a new WorkflowFactory.
-func NewWorkflowFactory(idFactory id.Factory) *WorkflowFactory {
-    return &WorkflowFactory{
-        idFactory: idFactory,
-    }
-}
-
-// Make creates a new Workflow aggregate with the given name.
-func (f *WorkflowFactory) Make(name string) *Workflow {
-    return newWorkflow(f.idFactory, f.idFactory.New(), name)
-}
-
-// IDFactory returns the ID factory for use in aggregate methods.
-func (f *WorkflowFactory) IDFactory() id.Factory {
-    return f.idFactory
-}
-```
-
-**Dependencies:** `pkg/id`
-
-**Tests Required:**
-- Test NewWorkflowFactory creates factory
-- Test Make creates workflow with generated ID
-
----
-
-### Step 6: Create Domain Events
+### Step 4: Create Domain Events
 
 **File:** `internal/domain/workflow/event/create_workflow.go`
 
 **Action:** CREATE
 
-**Rationale:** Domain events enable event sourcing and async processing via outbox.
+**Rationale:** Domain event for workflow creation.
 
 **Pseudocode:**
 
@@ -521,15 +324,14 @@ import (
     "use-open-workflow.io/engine/pkg/id"
 )
 
-// CreateWorkflow is emitted when a new workflow is created.
 type CreateWorkflow struct {
     domain.BaseEvent
-    WorkflowID string `json:"workflow_id"`
-    Name       string `json:"name"`
+    WorkflowID  string `json:"workflow_id"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
 }
 
-// NewCreateWorkflow creates a new CreateWorkflow event.
-func NewCreateWorkflow(idFactory id.Factory, workflowID, name string) *CreateWorkflow {
+func NewCreateWorkflow(idFactory id.Factory, workflowID, name, description string) *CreateWorkflow {
     return &CreateWorkflow{
         BaseEvent: domain.NewBaseEvent(
             idFactory.New(),
@@ -537,8 +339,9 @@ func NewCreateWorkflow(idFactory id.Factory, workflowID, name string) *CreateWor
             "Workflow",
             "CreateWorkflow",
         ),
-        WorkflowID: workflowID,
-        Name:       name,
+        WorkflowID:  workflowID,
+        Name:        name,
+        Description: description,
     }
 }
 ```
@@ -557,15 +360,14 @@ import (
     "use-open-workflow.io/engine/pkg/id"
 )
 
-// UpdateWorkflow is emitted when a workflow is updated.
 type UpdateWorkflow struct {
     domain.BaseEvent
-    WorkflowID string `json:"workflow_id"`
-    Name       string `json:"name"`
+    WorkflowID  string `json:"workflow_id"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
 }
 
-// NewUpdateWorkflow creates a new UpdateWorkflow event.
-func NewUpdateWorkflow(idFactory id.Factory, workflowID, name string) *UpdateWorkflow {
+func NewUpdateWorkflow(idFactory id.Factory, workflowID, name, description string) *UpdateWorkflow {
     return &UpdateWorkflow{
         BaseEvent: domain.NewBaseEvent(
             idFactory.New(),
@@ -573,27 +375,479 @@ func NewUpdateWorkflow(idFactory id.Factory, workflowID, name string) *UpdateWor
             "Workflow",
             "UpdateWorkflow",
         ),
-        WorkflowID: workflowID,
-        Name:       name,
+        WorkflowID:  workflowID,
+        Name:        name,
+        Description: description,
     }
 }
 ```
 
-**Dependencies:** `pkg/domain`, `pkg/id`
+**File:** `internal/domain/workflow/event/add_node_definition.go`
+
+**Action:** CREATE
+
+**Pseudocode:**
+
+```go
+package event
+
+import (
+    "use-open-workflow.io/engine/pkg/domain"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+type AddNodeDefinition struct {
+    domain.BaseEvent
+    WorkflowID       string `json:"workflow_id"`
+    NodeDefinitionID string `json:"node_definition_id"`
+    NodeTemplateID   string `json:"node_template_id"`
+    Name             string `json:"name"`
+}
+
+func NewAddNodeDefinition(
+    idFactory id.Factory,
+    workflowID, nodeDefinitionID, nodeTemplateID, name string,
+) *AddNodeDefinition {
+    return &AddNodeDefinition{
+        BaseEvent: domain.NewBaseEvent(
+            idFactory.New(),
+            workflowID,
+            "Workflow",
+            "AddNodeDefinition",
+        ),
+        WorkflowID:       workflowID,
+        NodeDefinitionID: nodeDefinitionID,
+        NodeTemplateID:   nodeTemplateID,
+        Name:             name,
+    }
+}
+```
+
+**File:** `internal/domain/workflow/event/remove_node_definition.go`
+
+**Action:** CREATE
+
+**Pseudocode:**
+
+```go
+package event
+
+import (
+    "use-open-workflow.io/engine/pkg/domain"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+type RemoveNodeDefinition struct {
+    domain.BaseEvent
+    WorkflowID       string `json:"workflow_id"`
+    NodeDefinitionID string `json:"node_definition_id"`
+}
+
+func NewRemoveNodeDefinition(
+    idFactory id.Factory,
+    workflowID, nodeDefinitionID string,
+) *RemoveNodeDefinition {
+    return &RemoveNodeDefinition{
+        BaseEvent: domain.NewBaseEvent(
+            idFactory.New(),
+            workflowID,
+            "Workflow",
+            "RemoveNodeDefinition",
+        ),
+        WorkflowID:       workflowID,
+        NodeDefinitionID: nodeDefinitionID,
+    }
+}
+```
+
+**File:** `internal/domain/workflow/event/add_edge.go`
+
+**Action:** CREATE
+
+**Pseudocode:**
+
+```go
+package event
+
+import (
+    "use-open-workflow.io/engine/pkg/domain"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+type AddEdge struct {
+    domain.BaseEvent
+    WorkflowID           string `json:"workflow_id"`
+    EdgeID               string `json:"edge_id"`
+    FromNodeDefinitionID string `json:"from_node_definition_id"`
+    ToNodeDefinitionID   string `json:"to_node_definition_id"`
+}
+
+func NewAddEdge(
+    idFactory id.Factory,
+    workflowID, edgeID, fromNodeDefinitionID, toNodeDefinitionID string,
+) *AddEdge {
+    return &AddEdge{
+        BaseEvent: domain.NewBaseEvent(
+            idFactory.New(),
+            workflowID,
+            "Workflow",
+            "AddEdge",
+        ),
+        WorkflowID:           workflowID,
+        EdgeID:               edgeID,
+        FromNodeDefinitionID: fromNodeDefinitionID,
+        ToNodeDefinitionID:   toNodeDefinitionID,
+    }
+}
+```
+
+**File:** `internal/domain/workflow/event/remove_edge.go`
+
+**Action:** CREATE
+
+**Pseudocode:**
+
+```go
+package event
+
+import (
+    "use-open-workflow.io/engine/pkg/domain"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+type RemoveEdge struct {
+    domain.BaseEvent
+    WorkflowID string `json:"workflow_id"`
+    EdgeID     string `json:"edge_id"`
+}
+
+func NewRemoveEdge(idFactory id.Factory, workflowID, edgeID string) *RemoveEdge {
+    return &RemoveEdge{
+        BaseEvent: domain.NewBaseEvent(
+            idFactory.New(),
+            workflowID,
+            "Workflow",
+            "RemoveEdge",
+        ),
+        WorkflowID: workflowID,
+        EdgeID:     edgeID,
+    }
+}
+```
+
+**Dependencies:**
+- `use-open-workflow.io/engine/pkg/domain`
+- `use-open-workflow.io/engine/pkg/id`
 
 **Tests Required:**
-- Test NewCreateWorkflow creates event with correct fields
-- Test NewUpdateWorkflow creates event with correct fields
+- Test each event constructor creates event with correct fields
 
 ---
 
-### Step 7: Create Port Layer DTOs
+### Step 5: Create Workflow Aggregate
+
+**File:** `internal/domain/workflow/aggregate/workflow.go`
+
+**Action:** CREATE
+
+**Rationale:** Workflow aggregate owns NodeDefinition and Edge collections and enforces business rules.
+
+**Pseudocode:**
+
+```go
+package aggregate
+
+import (
+    "errors"
+    "time"
+
+    "use-open-workflow.io/engine/internal/domain/workflow/entity"
+    "use-open-workflow.io/engine/internal/domain/workflow/event"
+    "use-open-workflow.io/engine/pkg/domain"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+var (
+    ErrNodeDefinitionNotFound = errors.New("node definition not found")
+    ErrEdgeNotFound           = errors.New("edge not found")
+    ErrDuplicateEdge          = errors.New("edge already exists")
+    ErrSelfLoop               = errors.New("edge cannot connect a node to itself")
+)
+
+// Workflow is the aggregate root containing NodeDefinitions and Edges
+type Workflow struct {
+    domain.BaseAggregate
+    Name            string
+    Description     string
+    NodeDefinitions []*entity.NodeDefinition
+    Edges           []*entity.Edge
+}
+
+// newWorkflow creates a new Workflow (internal constructor)
+func newWorkflow(
+    idFactory id.Factory,
+    aggregateID string,
+    name string,
+    description string,
+) *Workflow {
+    workflow := &Workflow{
+        BaseAggregate:   domain.NewBaseAggregate(aggregateID),
+        Name:            name,
+        Description:     description,
+        NodeDefinitions: make([]*entity.NodeDefinition, 0),
+        Edges:           make([]*entity.Edge, 0),
+    }
+    workflow.AddEvent(event.NewCreateWorkflow(idFactory, aggregateID, name, description))
+    return workflow
+}
+
+// ReconstituteWorkflow recreates aggregate from database
+// Note: NodeDefinitions and Edges should be added separately after reconstruction
+func ReconstituteWorkflow(
+    aggregateID string,
+    name string,
+    description string,
+    createdAt time.Time,
+    updatedAt time.Time,
+) *Workflow {
+    return &Workflow{
+        BaseAggregate:   domain.ReconstituteBaseAggregate(aggregateID, createdAt, updatedAt),
+        Name:            name,
+        Description:     description,
+        NodeDefinitions: make([]*entity.NodeDefinition, 0),
+        Edges:           make([]*entity.Edge, 0),
+    }
+}
+
+// UpdateName updates workflow name
+func (w *Workflow) UpdateName(idFactory id.Factory, name string) {
+    w.Name = name
+    w.SetUpdatedAt(time.Now().UTC())
+    w.AddEvent(event.NewUpdateWorkflow(idFactory, w.ID, w.Name, w.Description))
+}
+
+// UpdateDescription updates workflow description
+func (w *Workflow) UpdateDescription(idFactory id.Factory, description string) {
+    w.Description = description
+    w.SetUpdatedAt(time.Now().UTC())
+    w.AddEvent(event.NewUpdateWorkflow(idFactory, w.ID, w.Name, w.Description))
+}
+
+// AddNodeDefinition adds a new NodeDefinition to the workflow
+// Returns the created NodeDefinition
+func (w *Workflow) AddNodeDefinition(
+    idFactory id.Factory,
+    nodeTemplateID string,
+    name string,
+    config map[string]interface{},
+    positionX float64,
+    positionY float64,
+) *entity.NodeDefinition {
+    nodeDefID := idFactory.New()
+    nodeDef := entity.NewNodeDefinition(
+        nodeDefID,
+        w.ID,
+        nodeTemplateID,
+        name,
+        config,
+        positionX,
+        positionY,
+    )
+    w.NodeDefinitions = append(w.NodeDefinitions, nodeDef)
+    w.SetUpdatedAt(time.Now().UTC())
+    w.AddEvent(event.NewAddNodeDefinition(idFactory, w.ID, nodeDefID, nodeTemplateID, name))
+    return nodeDef
+}
+
+// RemoveNodeDefinition removes a NodeDefinition by ID
+// Also removes any edges connected to this node
+func (w *Workflow) RemoveNodeDefinition(idFactory id.Factory, nodeDefID string) error {
+    found := false
+    newNodeDefs := make([]*entity.NodeDefinition, 0, len(w.NodeDefinitions))
+    for _, nd := range w.NodeDefinitions {
+        if nd.ID == nodeDefID {
+            found = true
+        } else {
+            newNodeDefs = append(newNodeDefs, nd)
+        }
+    }
+    if !found {
+        return ErrNodeDefinitionNotFound
+    }
+    w.NodeDefinitions = newNodeDefs
+
+    // Remove edges connected to this node
+    newEdges := make([]*entity.Edge, 0, len(w.Edges))
+    for _, e := range w.Edges {
+        if e.FromNodeDefinitionID != nodeDefID && e.ToNodeDefinitionID != nodeDefID {
+            newEdges = append(newEdges, e)
+        }
+    }
+    w.Edges = newEdges
+
+    w.SetUpdatedAt(time.Now().UTC())
+    w.AddEvent(event.NewRemoveNodeDefinition(idFactory, w.ID, nodeDefID))
+    return nil
+}
+
+// GetNodeDefinition returns a NodeDefinition by ID
+func (w *Workflow) GetNodeDefinition(nodeDefID string) *entity.NodeDefinition {
+    for _, nd := range w.NodeDefinitions {
+        if nd.ID == nodeDefID {
+            return nd
+        }
+    }
+    return nil
+}
+
+// AddEdge adds a new Edge connecting two NodeDefinitions
+// Validates that both nodes exist and are different
+func (w *Workflow) AddEdge(
+    idFactory id.Factory,
+    fromNodeDefID string,
+    toNodeDefID string,
+) (*entity.Edge, error) {
+    // Validate no self-loop
+    if fromNodeDefID == toNodeDefID {
+        return nil, ErrSelfLoop
+    }
+
+    // Validate both nodes exist
+    fromExists := false
+    toExists := false
+    for _, nd := range w.NodeDefinitions {
+        if nd.ID == fromNodeDefID {
+            fromExists = true
+        }
+        if nd.ID == toNodeDefID {
+            toExists = true
+        }
+    }
+    if !fromExists || !toExists {
+        return nil, ErrNodeDefinitionNotFound
+    }
+
+    // Check for duplicate edge
+    for _, e := range w.Edges {
+        if e.FromNodeDefinitionID == fromNodeDefID && e.ToNodeDefinitionID == toNodeDefID {
+            return nil, ErrDuplicateEdge
+        }
+    }
+
+    edgeID := idFactory.New()
+    edge := entity.NewEdge(edgeID, w.ID, fromNodeDefID, toNodeDefID)
+    w.Edges = append(w.Edges, edge)
+    w.SetUpdatedAt(time.Now().UTC())
+    w.AddEvent(event.NewAddEdge(idFactory, w.ID, edgeID, fromNodeDefID, toNodeDefID))
+    return edge, nil
+}
+
+// RemoveEdge removes an Edge by ID
+func (w *Workflow) RemoveEdge(idFactory id.Factory, edgeID string) error {
+    found := false
+    newEdges := make([]*entity.Edge, 0, len(w.Edges))
+    for _, e := range w.Edges {
+        if e.ID == edgeID {
+            found = true
+        } else {
+            newEdges = append(newEdges, e)
+        }
+    }
+    if !found {
+        return ErrEdgeNotFound
+    }
+    w.Edges = newEdges
+    w.SetUpdatedAt(time.Now().UTC())
+    w.AddEvent(event.NewRemoveEdge(idFactory, w.ID, edgeID))
+    return nil
+}
+
+// GetEdge returns an Edge by ID
+func (w *Workflow) GetEdge(edgeID string) *entity.Edge {
+    for _, e := range w.Edges {
+        if e.ID == edgeID {
+            return e
+        }
+    }
+    return nil
+}
+
+// SetNodeDefinitions sets the NodeDefinitions (used during reconstitution)
+func (w *Workflow) SetNodeDefinitions(nodeDefs []*entity.NodeDefinition) {
+    w.NodeDefinitions = nodeDefs
+}
+
+// SetEdges sets the Edges (used during reconstitution)
+func (w *Workflow) SetEdges(edges []*entity.Edge) {
+    w.Edges = edges
+}
+```
+
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/entity`
+- `use-open-workflow.io/engine/internal/domain/workflow/event`
+- `use-open-workflow.io/engine/pkg/domain`
+- `use-open-workflow.io/engine/pkg/id`
+
+**Tests Required:**
+- Test newWorkflow creates aggregate with event
+- Test ReconstituteWorkflow recreates aggregate without events
+- Test UpdateName updates and emits event
+- Test AddNodeDefinition adds node and emits event
+- Test RemoveNodeDefinition removes node and connected edges
+- Test AddEdge validates nodes exist and no self-loop
+- Test AddEdge rejects duplicate edges
+- Test RemoveEdge removes edge and emits event
+
+---
+
+### Step 6: Create Workflow Factory
+
+**File:** `internal/domain/workflow/aggregate/workflow_factory.go`
+
+**Action:** CREATE
+
+**Rationale:** Factory pattern for creating Workflow aggregates.
+
+**Pseudocode:**
+
+```go
+package aggregate
+
+import (
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+type WorkflowFactory struct {
+    idFactory id.Factory
+}
+
+func NewWorkflowFactory(idFactory id.Factory) *WorkflowFactory {
+    return &WorkflowFactory{
+        idFactory: idFactory,
+    }
+}
+
+func (f *WorkflowFactory) Make(name string, description string) *Workflow {
+    return newWorkflow(f.idFactory, f.idFactory.New(), name, description)
+}
+```
+
+**Dependencies:**
+- `use-open-workflow.io/engine/pkg/id`
+
+**Tests Required:**
+- Test Make creates workflow with correct name and description
+
+---
+
+### Step 7: Create Inbound Port DTOs
 
 **File:** `internal/port/workflow/inbound/workflow_dto.go`
 
 **Action:** CREATE
 
-**Rationale:** DTOs define the data contract between HTTP layer and services.
+**Rationale:** DTOs for API layer communication.
 
 **Pseudocode:**
 
@@ -602,48 +856,85 @@ package inbound
 
 import "time"
 
-// WorkflowDTO represents a Workflow for API responses.
+// WorkflowDTO represents a workflow for API responses
 type WorkflowDTO struct {
-    ID              string              `json:"id"`
-    Name            string              `json:"name"`
-    NodeDefinitions []NodeDefinitionDTO `json:"nodeDefinitions"`
-    Edges           []EdgeDTO           `json:"edges"`
-    CreatedAt       time.Time           `json:"createdAt"`
-    UpdatedAt       time.Time           `json:"updatedAt"`
+    ID              string               `json:"id"`
+    Name            string               `json:"name"`
+    Description     string               `json:"description"`
+    NodeDefinitions []*NodeDefinitionDTO `json:"nodeDefinitions"`
+    Edges           []*EdgeDTO           `json:"edges"`
+    CreatedAt       time.Time            `json:"createdAt"`
+    UpdatedAt       time.Time            `json:"updatedAt"`
 }
 
-// NodeDefinitionDTO represents a NodeDefinition for API responses.
+// NodeDefinitionDTO represents a node definition for API responses
 type NodeDefinitionDTO struct {
-    ID             string  `json:"id"`
-    WorkflowID     string  `json:"workflowId"`
-    NodeTemplateID string  `json:"nodeTemplateId"`
-    Name           string  `json:"name"`
-    PositionX      float64 `json:"positionX"`
-    PositionY      float64 `json:"positionY"`
+    ID             string                 `json:"id"`
+    WorkflowID     string                 `json:"workflowId"`
+    NodeTemplateID string                 `json:"nodeTemplateId"`
+    Name           string                 `json:"name"`
+    Config         map[string]interface{} `json:"config,omitempty"`
+    PositionX      float64                `json:"positionX"`
+    PositionY      float64                `json:"positionY"`
+    CreatedAt      time.Time              `json:"createdAt"`
+    UpdatedAt      time.Time              `json:"updatedAt"`
 }
 
-// EdgeDTO represents an Edge for API responses.
+// EdgeDTO represents an edge for API responses
 type EdgeDTO struct {
-    ID         string `json:"id"`
-    WorkflowID string `json:"workflowId"`
-    FromNodeID string `json:"fromNodeId"`
-    ToNodeID   string `json:"toNodeId"`
+    ID                   string    `json:"id"`
+    WorkflowID           string    `json:"workflowId"`
+    FromNodeDefinitionID string    `json:"fromNodeDefinitionId"`
+    ToNodeDefinitionID   string    `json:"toNodeDefinitionId"`
+    CreatedAt            time.Time `json:"createdAt"`
+}
+
+// Input structs for write operations
+type CreateWorkflowInput struct {
+    Name        string `json:"name"`
+    Description string `json:"description"`
+}
+
+type UpdateWorkflowInput struct {
+    Name        string `json:"name"`
+    Description string `json:"description"`
+}
+
+type AddNodeDefinitionInput struct {
+    NodeTemplateID string                 `json:"nodeTemplateId"`
+    Name           string                 `json:"name"`
+    Config         map[string]interface{} `json:"config,omitempty"`
+    PositionX      float64                `json:"positionX"`
+    PositionY      float64                `json:"positionY"`
+}
+
+type UpdateNodeDefinitionInput struct {
+    Name      string                 `json:"name,omitempty"`
+    Config    map[string]interface{} `json:"config,omitempty"`
+    PositionX *float64               `json:"positionX,omitempty"`
+    PositionY *float64               `json:"positionY,omitempty"`
+}
+
+type AddEdgeInput struct {
+    FromNodeDefinitionID string `json:"fromNodeDefinitionId"`
+    ToNodeDefinitionID   string `json:"toNodeDefinitionId"`
 }
 ```
 
 **Dependencies:** None
 
-**Tests Required:** None (data structures only)
+**Tests Required:**
+- None (pure data structures)
 
 ---
 
-### Step 8: Create Port Layer Service Interfaces
+### Step 8: Create Inbound Port Service Interfaces
 
 **File:** `internal/port/workflow/inbound/workflow_read_service.go`
 
 **Action:** CREATE
 
-**Rationale:** Define read service contract for dependency inversion.
+**Rationale:** Define read service interface.
 
 **Pseudocode:**
 
@@ -652,12 +943,8 @@ package inbound
 
 import "context"
 
-// WorkflowReadService defines read operations for workflows.
 type WorkflowReadService interface {
-    // List returns all workflows (without child entities for performance)
     List(ctx context.Context) ([]*WorkflowDTO, error)
-
-    // GetByID returns a workflow with all its node definitions and edges.
     GetByID(ctx context.Context, id string) (*WorkflowDTO, error)
 }
 ```
@@ -673,99 +960,137 @@ package inbound
 
 import "context"
 
-// CreateWorkflowInput contains data for creating a new workflow.
-type CreateWorkflowInput struct {
-    Name string `json:"name"`
-}
-
-// UpdateWorkflowInput contains data for updating a workflow.
-type UpdateWorkflowInput struct {
-    Name string `json:"name"`
-}
-
-// AddNodeDefinitionInput contains data for adding a node definition.
-type AddNodeDefinitionInput struct {
-    NodeTemplateID string  `json:"nodeTemplateId"`
-    Name           string  `json:"name"`
-    PositionX      float64 `json:"positionX"`
-    PositionY      float64 `json:"positionY"`
-}
-
-// AddEdgeInput contains data for adding an edge.
-type AddEdgeInput struct {
-    FromNodeID string `json:"fromNodeId"`
-    ToNodeID   string `json:"toNodeId"`
-}
-
-// WorkflowWriteService defines write operations for workflows.
 type WorkflowWriteService interface {
-    // Create creates a new workflow.
+    // Workflow CRUD
     Create(ctx context.Context, input CreateWorkflowInput) (*WorkflowDTO, error)
-
-    // Update updates an existing workflow's properties.
     Update(ctx context.Context, id string, input UpdateWorkflowInput) (*WorkflowDTO, error)
-
-    // Delete deletes a workflow and all its child entities.
     Delete(ctx context.Context, id string) error
 
-    // AddNodeDefinition adds a node definition to a workflow.
-    AddNodeDefinition(ctx context.Context, workflowID string, input AddNodeDefinitionInput) (*WorkflowDTO, error)
+    // NodeDefinition operations (nested under Workflow)
+    AddNodeDefinition(ctx context.Context, workflowID string, input AddNodeDefinitionInput) (*NodeDefinitionDTO, error)
+    UpdateNodeDefinition(ctx context.Context, workflowID string, nodeDefID string, input UpdateNodeDefinitionInput) (*NodeDefinitionDTO, error)
+    RemoveNodeDefinition(ctx context.Context, workflowID string, nodeDefID string) error
 
-    // RemoveNodeDefinition removes a node definition from a workflow.
-    RemoveNodeDefinition(ctx context.Context, workflowID, nodeID string) (*WorkflowDTO, error)
-
-    // AddEdge adds an edge between two node definitions.
-    AddEdge(ctx context.Context, workflowID string, input AddEdgeInput) (*WorkflowDTO, error)
-
-    // RemoveEdge removes an edge from a workflow.
-    RemoveEdge(ctx context.Context, workflowID, edgeID string) (*WorkflowDTO, error)
+    // Edge operations (nested under Workflow)
+    AddEdge(ctx context.Context, workflowID string, input AddEdgeInput) (*EdgeDTO, error)
+    RemoveEdge(ctx context.Context, workflowID string, edgeID string) error
 }
 ```
 
 **Dependencies:** None
 
-**Tests Required:** None (interface definitions)
+**Tests Required:**
+- None (interfaces)
 
 ---
 
-### Step 9: Create Port Layer Mapper Interface
+### Step 9: Create Inbound Port Mapper Interface
 
 **File:** `internal/port/workflow/inbound/workflow_mapper.go`
 
 **Action:** CREATE
 
-**Rationale:** Mapper interface allows different mapping implementations.
+**Rationale:** Define mapper interface for aggregate to DTO conversion.
 
 **Pseudocode:**
 
 ```go
 package inbound
 
-import "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+import (
+    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/internal/domain/workflow/entity"
+)
 
-// WorkflowMapper converts between aggregates and DTOs.
 type WorkflowMapper interface {
-    // To converts a Workflow aggregate to a WorkflowDTO.
-    To(workflow *aggregate.Workflow) (*WorkflowDTO, error)
-
-    // ToList converts a slice of Workflow aggregates to WorkflowDTOs.
-    ToList(workflows []*aggregate.Workflow) ([]*WorkflowDTO, error)
+    ToWorkflowDTO(workflow *aggregate.Workflow) (*WorkflowDTO, error)
+    ToNodeDefinitionDTO(nodeDef *entity.NodeDefinition) (*NodeDefinitionDTO, error)
+    ToEdgeDTO(edge *entity.Edge) (*EdgeDTO, error)
 }
 ```
 
-**Dependencies:** `internal/domain/workflow/aggregate`
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/internal/domain/workflow/entity`
 
-**Tests Required:** None (interface definition)
+**Tests Required:**
+- None (interface)
 
 ---
 
-### Step 10: Create Port Layer Repository Interfaces
+### Step 10: Create Outbound Port Models
+
+**File:** `internal/port/workflow/outbound/workflow_model.go`
+
+**Action:** CREATE
+
+**Rationale:** Database models for persistence layer.
+
+**Pseudocode:**
+
+```go
+package outbound
+
+import "time"
+
+// WorkflowModel represents workflow in database
+type WorkflowModel struct {
+    ID          string
+    Name        string
+    Description string
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+}
+
+func NewWorkflowModel() *WorkflowModel {
+    return &WorkflowModel{}
+}
+
+// NodeDefinitionModel represents node_definition in database
+type NodeDefinitionModel struct {
+    ID             string
+    WorkflowID     string
+    NodeTemplateID string
+    Name           string
+    Config         map[string]interface{}
+    PositionX      float64
+    PositionY      float64
+    CreatedAt      time.Time
+    UpdatedAt      time.Time
+}
+
+func NewNodeDefinitionModel() *NodeDefinitionModel {
+    return &NodeDefinitionModel{}
+}
+
+// EdgeModel represents edge in database
+type EdgeModel struct {
+    ID                   string
+    WorkflowID           string
+    FromNodeDefinitionID string
+    ToNodeDefinitionID   string
+    CreatedAt            time.Time
+}
+
+func NewEdgeModel() *EdgeModel {
+    return &EdgeModel{}
+}
+```
+
+**Dependencies:** None
+
+**Tests Required:**
+- None (pure data structures)
+
+---
+
+### Step 11: Create Outbound Port Repository Interfaces
 
 **File:** `internal/port/workflow/outbound/workflow_read_repository.go`
 
 **Action:** CREATE
 
-**Rationale:** Define repository contract for data access.
+**Rationale:** Define read repository interface.
 
 **Pseudocode:**
 
@@ -778,12 +1103,11 @@ import (
     "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
 )
 
-// WorkflowReadRepository defines read operations for workflows.
 type WorkflowReadRepository interface {
-    // FindMany returns all workflows with their child entities.
+    // FindMany returns all workflows (without nested entities for list view)
     FindMany(ctx context.Context) ([]*aggregate.Workflow, error)
 
-    // FindByID returns a workflow by ID with all child entities, or nil if not found.
+    // FindByID returns workflow with all nested NodeDefinitions and Edges
     FindByID(ctx context.Context, id string) (*aggregate.Workflow, error)
 }
 ```
@@ -801,29 +1125,36 @@ import (
     "context"
 
     "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/internal/domain/workflow/entity"
 )
 
-// WorkflowWriteRepository defines write operations for workflows.
 type WorkflowWriteRepository interface {
-    // Save persists a new workflow with all its child entities.
+    // Workflow operations
     Save(ctx context.Context, workflow *aggregate.Workflow) error
-
-    // Update updates an existing workflow and syncs all child entities.
-    // This performs a full sync: inserts new, updates existing, deletes removed.
     Update(ctx context.Context, workflow *aggregate.Workflow) error
-
-    // Delete removes a workflow by ID (cascade deletes child entities via FK).
     Delete(ctx context.Context, id string) error
+
+    // NodeDefinition operations
+    SaveNodeDefinition(ctx context.Context, nodeDef *entity.NodeDefinition) error
+    UpdateNodeDefinition(ctx context.Context, nodeDef *entity.NodeDefinition) error
+    DeleteNodeDefinition(ctx context.Context, id string) error
+
+    // Edge operations
+    SaveEdge(ctx context.Context, edge *entity.Edge) error
+    DeleteEdge(ctx context.Context, id string) error
 }
 ```
 
-**Dependencies:** `internal/domain/workflow/aggregate`
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/internal/domain/workflow/entity`
 
-**Tests Required:** None (interface definitions)
+**Tests Required:**
+- None (interfaces)
 
 ---
 
-### Step 11: Create Port Layer Repository Factory Interfaces
+### Step 12: Create Outbound Port Repository Factory Interfaces
 
 **File:** `internal/port/workflow/outbound/workflow_read_repository_factory.go`
 
@@ -834,11 +1165,10 @@ type WorkflowWriteRepository interface {
 ```go
 package outbound
 
-import portOutbound "use-open-workflow.io/engine/internal/port/outbound"
+import "use-open-workflow.io/engine/internal/port/outbound"
 
-// WorkflowReadRepositoryFactory creates UoW-scoped read repositories.
 type WorkflowReadRepositoryFactory interface {
-    Create(uow portOutbound.UnitOfWork) WorkflowReadRepository
+    Create(uow outbound.UnitOfWork) WorkflowReadRepository
 }
 ```
 
@@ -851,594 +1181,28 @@ type WorkflowReadRepositoryFactory interface {
 ```go
 package outbound
 
-import portOutbound "use-open-workflow.io/engine/internal/port/outbound"
+import "use-open-workflow.io/engine/internal/port/outbound"
 
-// WorkflowWriteRepositoryFactory creates UoW-scoped write repositories.
 type WorkflowWriteRepositoryFactory interface {
-    Create(uow portOutbound.UnitOfWork) WorkflowWriteRepository
+    Create(uow outbound.UnitOfWork) WorkflowWriteRepository
 }
 ```
 
-**Dependencies:** `internal/port/outbound`
-
-**Tests Required:** None (interface definitions)
-
----
-
-### Step 12: Create Port Layer Models
-
-**File:** `internal/port/workflow/outbound/workflow_model.go`
-
-**Action:** CREATE
-
-**Rationale:** Models represent database row structures.
-
-**Pseudocode:**
-
-```go
-package outbound
-
-import "time"
-
-// WorkflowModel represents a workflow database row.
-type WorkflowModel struct {
-    ID        string
-    Name      string
-    CreatedAt time.Time
-    UpdatedAt time.Time
-}
-
-// NodeDefinitionModel represents a node_definition database row.
-type NodeDefinitionModel struct {
-    ID             string
-    WorkflowID     string
-    NodeTemplateID string
-    Name           string
-    PositionX      float64
-    PositionY      float64
-}
-
-// EdgeModel represents an edge database row.
-type EdgeModel struct {
-    ID         string
-    WorkflowID string
-    FromNodeID string
-    ToNodeID   string
-}
-```
-
-**Dependencies:** None
-
-**Tests Required:** None (data structures only)
-
----
-
-### Step 13: Create Adapter Mapper Implementation
-
-**File:** `internal/adapter/workflow/inbound/workflow_mapper.go`
-
-**Action:** CREATE
-
-**Rationale:** Concrete implementation of aggregate-to-DTO conversion.
-
-**Pseudocode:**
-
-```go
-package inbound
-
-import (
-    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
-    "use-open-workflow.io/engine/internal/port/workflow/inbound"
-)
-
-// WorkflowMapper implements the WorkflowMapper interface.
-type WorkflowMapper struct{}
-
-// NewWorkflowMapper creates a new WorkflowMapper.
-func NewWorkflowMapper() *WorkflowMapper {
-    return &WorkflowMapper{}
-}
-
-// To converts a Workflow aggregate to a WorkflowDTO.
-func (m *WorkflowMapper) To(workflow *aggregate.Workflow) (*inbound.WorkflowDTO, error) {
-    // 1. Convert NodeDefinitions
-    nodeDefinitions := make([]inbound.NodeDefinitionDTO, len(workflow.NodeDefinitions))
-    for i, nd := range workflow.NodeDefinitions {
-        nodeDefinitions[i] = inbound.NodeDefinitionDTO{
-            ID:             nd.ID,
-            WorkflowID:     nd.WorkflowID,
-            NodeTemplateID: nd.NodeTemplateID,
-            Name:           nd.Name,
-            PositionX:      nd.PositionX,
-            PositionY:      nd.PositionY,
-        }
-    }
-
-    // 2. Convert Edges
-    edges := make([]inbound.EdgeDTO, len(workflow.Edges))
-    for i, e := range workflow.Edges {
-        edges[i] = inbound.EdgeDTO{
-            ID:         e.ID,
-            WorkflowID: e.WorkflowID,
-            FromNodeID: e.FromNodeID,
-            ToNodeID:   e.ToNodeID,
-        }
-    }
-
-    // 3. Build and return DTO
-    return &inbound.WorkflowDTO{
-        ID:              workflow.ID,
-        Name:            workflow.Name,
-        NodeDefinitions: nodeDefinitions,
-        Edges:           edges,
-        CreatedAt:       workflow.CreatedAt,
-        UpdatedAt:       workflow.UpdatedAt,
-    }, nil
-}
-
-// ToList converts a slice of Workflow aggregates to WorkflowDTOs.
-func (m *WorkflowMapper) ToList(workflows []*aggregate.Workflow) ([]*inbound.WorkflowDTO, error) {
-    result := make([]*inbound.WorkflowDTO, len(workflows))
-    for i, w := range workflows {
-        dto, err := m.To(w)
-        if err != nil {
-            return nil, err
-        }
-        result[i] = dto
-    }
-    return result, nil
-}
-```
-
-**Dependencies:** `internal/domain/workflow/aggregate`, `internal/port/workflow/inbound`
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/port/outbound`
 
 **Tests Required:**
-- Test To converts aggregate to DTO correctly
-- Test ToList converts slice correctly
-- Test handles empty NodeDefinitions and Edges
+- None (interfaces)
 
 ---
 
-### Step 14: Create Adapter Read Service Implementation
-
-**File:** `internal/adapter/workflow/inbound/workflow_read_service.go`
-
-**Action:** CREATE
-
-**Rationale:** Implements read operations using UoW pattern.
-
-**Pseudocode:**
-
-```go
-package inbound
-
-import (
-    "context"
-    "fmt"
-
-    "use-open-workflow.io/engine/internal/port/outbound"
-    "use-open-workflow.io/engine/internal/port/workflow/inbound"
-    workflowOutbound "use-open-workflow.io/engine/internal/port/workflow/outbound"
-)
-
-// WorkflowReadService implements the WorkflowReadService interface.
-type WorkflowReadService struct {
-    uowFactory            outbound.UnitOfWorkFactory
-    readRepositoryFactory workflowOutbound.WorkflowReadRepositoryFactory
-    mapper                inbound.WorkflowMapper
-}
-
-// NewWorkflowReadService creates a new WorkflowReadService.
-func NewWorkflowReadService(
-    uowFactory outbound.UnitOfWorkFactory,
-    readRepositoryFactory workflowOutbound.WorkflowReadRepositoryFactory,
-    mapper inbound.WorkflowMapper,
-) *WorkflowReadService {
-    return &WorkflowReadService{
-        uowFactory:            uowFactory,
-        readRepositoryFactory: readRepositoryFactory,
-        mapper:                mapper,
-    }
-}
-
-// List returns all workflows.
-func (s *WorkflowReadService) List(ctx context.Context) ([]*inbound.WorkflowDTO, error) {
-    // 1. Create UoW and repository
-    uow := s.uowFactory.Create()
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    // 2. Begin transaction (for consistency)
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer uow.Rollback(txCtx) // Read-only, rollback is fine
-
-    // 3. Fetch workflows
-    workflows, err := readRepo.FindMany(txCtx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflows: %w", err)
-    }
-
-    // 4. Convert to DTOs
-    return s.mapper.ToList(workflows)
-}
-
-// GetByID returns a workflow by ID.
-func (s *WorkflowReadService) GetByID(ctx context.Context, id string) (*inbound.WorkflowDTO, error) {
-    // 1. Create UoW and repository
-    uow := s.uowFactory.Create()
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    // 2. Begin transaction
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer uow.Rollback(txCtx)
-
-    // 3. Fetch workflow
-    workflow, err := readRepo.FindByID(txCtx, id)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflow: %w", err)
-    }
-    if workflow == nil {
-        return nil, nil // Not found
-    }
-
-    // 4. Convert to DTO
-    return s.mapper.To(workflow)
-}
-```
-
-**Dependencies:** `internal/port/outbound`, `internal/port/workflow/inbound`, `internal/port/workflow/outbound`
-
-**Tests Required:**
-- Test List returns all workflows as DTOs
-- Test GetByID returns workflow as DTO
-- Test GetByID returns nil for not found
-
----
-
-### Step 15: Create Adapter Write Service Implementation
-
-**File:** `internal/adapter/workflow/inbound/workflow_write_service.go`
-
-**Action:** CREATE
-
-**Rationale:** Implements write operations with transaction management.
-
-**Pseudocode:**
-
-```go
-package inbound
-
-import (
-    "context"
-    "fmt"
-
-    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
-    "use-open-workflow.io/engine/internal/port/outbound"
-    "use-open-workflow.io/engine/internal/port/workflow/inbound"
-    workflowOutbound "use-open-workflow.io/engine/internal/port/workflow/outbound"
-    "use-open-workflow.io/engine/pkg/id"
-)
-
-// WorkflowWriteService implements the WorkflowWriteService interface.
-type WorkflowWriteService struct {
-    uowFactory             outbound.UnitOfWorkFactory
-    writeRepositoryFactory workflowOutbound.WorkflowWriteRepositoryFactory
-    readRepositoryFactory  workflowOutbound.WorkflowReadRepositoryFactory
-    factory                *aggregate.WorkflowFactory
-    mapper                 inbound.WorkflowMapper
-    idFactory              id.Factory
-}
-
-// NewWorkflowWriteService creates a new WorkflowWriteService.
-func NewWorkflowWriteService(
-    uowFactory outbound.UnitOfWorkFactory,
-    writeRepositoryFactory workflowOutbound.WorkflowWriteRepositoryFactory,
-    readRepositoryFactory workflowOutbound.WorkflowReadRepositoryFactory,
-    factory *aggregate.WorkflowFactory,
-    mapper inbound.WorkflowMapper,
-    idFactory id.Factory,
-) *WorkflowWriteService {
-    return &WorkflowWriteService{
-        uowFactory:             uowFactory,
-        writeRepositoryFactory: writeRepositoryFactory,
-        readRepositoryFactory:  readRepositoryFactory,
-        factory:                factory,
-        mapper:                 mapper,
-        idFactory:              idFactory,
-    }
-}
-
-// Create creates a new workflow.
-func (s *WorkflowWriteService) Create(ctx context.Context, input inbound.CreateWorkflowInput) (*inbound.WorkflowDTO, error) {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    // 1. Create workflow aggregate
-    workflow := s.factory.Make(input.Name)
-
-    // 2. Save to repository
-    if err = writeRepo.Save(txCtx, workflow); err != nil {
-        return nil, fmt.Errorf("failed to save workflow: %w", err)
-    }
-
-    // 3. Commit transaction
-    if err = uow.Commit(txCtx); err != nil {
-        return nil, fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return s.mapper.To(workflow)
-}
-
-// Update updates an existing workflow.
-func (s *WorkflowWriteService) Update(ctx context.Context, id string, input inbound.UpdateWorkflowInput) (*inbound.WorkflowDTO, error) {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    // 1. Load existing workflow
-    workflow, err := readRepo.FindByID(txCtx, id)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflow: %w", err)
-    }
-    if workflow == nil {
-        return nil, fmt.Errorf("workflow not found: %s", id)
-    }
-
-    // 2. Update aggregate
-    workflow.UpdateName(s.idFactory, input.Name)
-
-    // 3. Persist changes
-    if err = writeRepo.Update(txCtx, workflow); err != nil {
-        return nil, fmt.Errorf("failed to update workflow: %w", err)
-    }
-
-    if err = uow.Commit(txCtx); err != nil {
-        return nil, fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return s.mapper.To(workflow)
-}
-
-// Delete deletes a workflow.
-func (s *WorkflowWriteService) Delete(ctx context.Context, id string) error {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    if err = writeRepo.Delete(txCtx, id); err != nil {
-        return fmt.Errorf("failed to delete workflow: %w", err)
-    }
-
-    if err = uow.Commit(txCtx); err != nil {
-        return fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return nil
-}
-
-// AddNodeDefinition adds a node definition to a workflow.
-func (s *WorkflowWriteService) AddNodeDefinition(ctx context.Context, workflowID string, input inbound.AddNodeDefinitionInput) (*inbound.WorkflowDTO, error) {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    // 1. Load workflow
-    workflow, err := readRepo.FindByID(txCtx, workflowID)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflow: %w", err)
-    }
-    if workflow == nil {
-        return nil, fmt.Errorf("workflow not found: %s", workflowID)
-    }
-
-    // 2. Add node definition to aggregate
-    workflow.AddNodeDefinition(s.idFactory, input.NodeTemplateID, input.Name, input.PositionX, input.PositionY)
-
-    // 3. Persist changes (full sync of child entities)
-    if err = writeRepo.Update(txCtx, workflow); err != nil {
-        return nil, fmt.Errorf("failed to update workflow: %w", err)
-    }
-
-    if err = uow.Commit(txCtx); err != nil {
-        return nil, fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return s.mapper.To(workflow)
-}
-
-// RemoveNodeDefinition removes a node definition from a workflow.
-func (s *WorkflowWriteService) RemoveNodeDefinition(ctx context.Context, workflowID, nodeID string) (*inbound.WorkflowDTO, error) {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    // 1. Load workflow
-    workflow, err := readRepo.FindByID(txCtx, workflowID)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflow: %w", err)
-    }
-    if workflow == nil {
-        return nil, fmt.Errorf("workflow not found: %s", workflowID)
-    }
-
-    // 2. Remove node from aggregate (cascades to edges)
-    if err = workflow.RemoveNodeDefinition(nodeID); err != nil {
-        return nil, fmt.Errorf("failed to remove node definition: %w", err)
-    }
-
-    // 3. Persist changes
-    if err = writeRepo.Update(txCtx, workflow); err != nil {
-        return nil, fmt.Errorf("failed to update workflow: %w", err)
-    }
-
-    if err = uow.Commit(txCtx); err != nil {
-        return nil, fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return s.mapper.To(workflow)
-}
-
-// AddEdge adds an edge between two node definitions.
-func (s *WorkflowWriteService) AddEdge(ctx context.Context, workflowID string, input inbound.AddEdgeInput) (*inbound.WorkflowDTO, error) {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    // 1. Load workflow
-    workflow, err := readRepo.FindByID(txCtx, workflowID)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflow: %w", err)
-    }
-    if workflow == nil {
-        return nil, fmt.Errorf("workflow not found: %s", workflowID)
-    }
-
-    // 2. Add edge to aggregate (validates nodes exist)
-    _, err = workflow.AddEdge(s.idFactory, input.FromNodeID, input.ToNodeID)
-    if err != nil {
-        return nil, fmt.Errorf("failed to add edge: %w", err)
-    }
-
-    // 3. Persist changes
-    if err = writeRepo.Update(txCtx, workflow); err != nil {
-        return nil, fmt.Errorf("failed to update workflow: %w", err)
-    }
-
-    if err = uow.Commit(txCtx); err != nil {
-        return nil, fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return s.mapper.To(workflow)
-}
-
-// RemoveEdge removes an edge from a workflow.
-func (s *WorkflowWriteService) RemoveEdge(ctx context.Context, workflowID, edgeID string) (*inbound.WorkflowDTO, error) {
-    uow := s.uowFactory.Create()
-    writeRepo := s.writeRepositoryFactory.Create(uow)
-    readRepo := s.readRepositoryFactory.Create(uow)
-
-    txCtx, err := uow.Begin(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to begin transaction: %w", err)
-    }
-    defer func() {
-        if err != nil {
-            uow.Rollback(txCtx)
-        }
-    }()
-
-    // 1. Load workflow
-    workflow, err := readRepo.FindByID(txCtx, workflowID)
-    if err != nil {
-        return nil, fmt.Errorf("failed to find workflow: %w", err)
-    }
-    if workflow == nil {
-        return nil, fmt.Errorf("workflow not found: %s", workflowID)
-    }
-
-    // 2. Remove edge from aggregate
-    if err = workflow.RemoveEdge(edgeID); err != nil {
-        return nil, fmt.Errorf("failed to remove edge: %w", err)
-    }
-
-    // 3. Persist changes
-    if err = writeRepo.Update(txCtx, workflow); err != nil {
-        return nil, fmt.Errorf("failed to update workflow: %w", err)
-    }
-
-    if err = uow.Commit(txCtx); err != nil {
-        return nil, fmt.Errorf("failed to commit transaction: %w", err)
-    }
-
-    return s.mapper.To(workflow)
-}
-```
-
-**Dependencies:** All port layer interfaces, domain aggregate, id factory
-
-**Tests Required:**
-- Test Create creates and persists workflow
-- Test Update loads, modifies, and persists
-- Test Delete removes workflow
-- Test AddNodeDefinition adds node to existing workflow
-- Test RemoveNodeDefinition removes node and connected edges
-- Test AddEdge validates and adds edge
-- Test RemoveEdge removes edge
-- Test error cases for not found scenarios
-
----
-
-### Step 16: Create Adapter PostgreSQL Read Repository
+### Step 13: Create Outbound Adapter - PostgreSQL Read Repository
 
 **File:** `internal/adapter/workflow/outbound/workflow_postgres_read_repository.go`
 
 **Action:** CREATE
 
-**Rationale:** Implements database read operations with parent-child loading.
+**Rationale:** PostgreSQL implementation of read repository.
 
 **Pseudocode:**
 
@@ -1447,30 +1211,32 @@ package outbound
 
 import (
     "context"
+    "encoding/json"
     "fmt"
     "time"
 
     "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/internal/domain/workflow/entity"
     portOutbound "use-open-workflow.io/engine/internal/port/outbound"
 )
 
-// WorkflowPostgresReadRepository implements WorkflowReadRepository.
 type WorkflowPostgresReadRepository struct {
     uow portOutbound.UnitOfWork
 }
 
-// NewWorkflowPostgresReadRepository creates a new repository.
-func NewWorkflowPostgresReadRepository(uow portOutbound.UnitOfWork) *WorkflowPostgresReadRepository {
-    return &WorkflowPostgresReadRepository{uow: uow}
+func NewWorkflowPostgresReadRepository(
+    uow portOutbound.UnitOfWork,
+) *WorkflowPostgresReadRepository {
+    return &WorkflowPostgresReadRepository{
+        uow: uow,
+    }
 }
 
-// FindMany returns all workflows with their child entities.
 func (r *WorkflowPostgresReadRepository) FindMany(ctx context.Context) ([]*aggregate.Workflow, error) {
     q := r.uow.Querier(ctx)
 
-    // 1. Query all workflows
     rows, err := q.Query(ctx, `
-        SELECT id, name, created_at, updated_at
+        SELECT id, name, description, created_at, updated_at
         FROM workflow
         ORDER BY created_at DESC
     `)
@@ -1479,59 +1245,36 @@ func (r *WorkflowPostgresReadRepository) FindMany(ctx context.Context) ([]*aggre
     }
     defer rows.Close()
 
-    // 2. Build workflow map
-    workflowMap := make(map[string]*aggregate.Workflow)
-    workflowIDs := make([]string, 0)
-
+    var workflows []*aggregate.Workflow
     for rows.Next() {
-        var id, name string
+        var id, name, description string
         var createdAt, updatedAt time.Time
-        if err := rows.Scan(&id, &name, &createdAt, &updatedAt); err != nil {
+        if err := rows.Scan(&id, &name, &description, &createdAt, &updatedAt); err != nil {
             return nil, fmt.Errorf("failed to scan workflow: %w", err)
         }
-        workflow := aggregate.ReconstituteWorkflow(id, name, createdAt, updatedAt, nil, nil)
-        workflowMap[id] = workflow
-        workflowIDs = append(workflowIDs, id)
+
+        workflow := aggregate.ReconstituteWorkflow(id, name, description, createdAt, updatedAt)
+        workflows = append(workflows, workflow)
     }
+
     if err := rows.Err(); err != nil {
         return nil, fmt.Errorf("row iteration error: %w", err)
     }
 
-    if len(workflowIDs) == 0 {
-        return []*aggregate.Workflow{}, nil
-    }
-
-    // 3. Load all node definitions for these workflows
-    if err := r.loadNodeDefinitions(ctx, workflowMap); err != nil {
-        return nil, err
-    }
-
-    // 4. Load all edges for these workflows
-    if err := r.loadEdges(ctx, workflowMap); err != nil {
-        return nil, err
-    }
-
-    // 5. Preserve order
-    result := make([]*aggregate.Workflow, len(workflowIDs))
-    for i, id := range workflowIDs {
-        result[i] = workflowMap[id]
-    }
-
-    return result, nil
+    return workflows, nil
 }
 
-// FindByID returns a workflow by ID with all child entities.
 func (r *WorkflowPostgresReadRepository) FindByID(ctx context.Context, id string) (*aggregate.Workflow, error) {
     q := r.uow.Querier(ctx)
 
-    // 1. Query workflow
-    var name string
+    // 1. Fetch workflow
+    var name, description string
     var createdAt, updatedAt time.Time
     err := q.QueryRow(ctx, `
-        SELECT id, name, created_at, updated_at
+        SELECT id, name, description, created_at, updated_at
         FROM workflow
         WHERE id = $1
-    `, id).Scan(&id, &name, &createdAt, &updatedAt)
+    `, id).Scan(&id, &name, &description, &createdAt, &updatedAt)
 
     if err != nil && err.Error() == "no rows in result set" {
         return nil, nil
@@ -1540,137 +1283,98 @@ func (r *WorkflowPostgresReadRepository) FindByID(ctx context.Context, id string
         return nil, fmt.Errorf("failed to query workflow: %w", err)
     }
 
-    // 2. Query node definitions
+    workflow := aggregate.ReconstituteWorkflow(id, name, description, createdAt, updatedAt)
+
+    // 2. Fetch NodeDefinitions
     nodeRows, err := q.Query(ctx, `
-        SELECT id, workflow_id, node_template_id, name, position_x, position_y
+        SELECT id, workflow_id, node_template_id, name, config, position_x, position_y, created_at, updated_at
         FROM node_definition
         WHERE workflow_id = $1
+        ORDER BY created_at ASC
     `, id)
     if err != nil {
         return nil, fmt.Errorf("failed to query node definitions: %w", err)
     }
     defer nodeRows.Close()
 
-    nodeDefinitions := make([]*aggregate.NodeDefinition, 0)
+    var nodeDefs []*entity.NodeDefinition
     for nodeRows.Next() {
         var ndID, wfID, ntID, ndName string
+        var configJSON []byte
         var posX, posY float64
-        if err := nodeRows.Scan(&ndID, &wfID, &ntID, &ndName, &posX, &posY); err != nil {
+        var ndCreatedAt, ndUpdatedAt time.Time
+
+        if err := nodeRows.Scan(&ndID, &wfID, &ntID, &ndName, &configJSON, &posX, &posY, &ndCreatedAt, &ndUpdatedAt); err != nil {
             return nil, fmt.Errorf("failed to scan node definition: %w", err)
         }
-        nodeDefinitions = append(nodeDefinitions, aggregate.ReconstituteNodeDefinition(ndID, wfID, ntID, ndName, posX, posY))
+
+        var config map[string]interface{}
+        if configJSON != nil {
+            if err := json.Unmarshal(configJSON, &config); err != nil {
+                return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+            }
+        }
+
+        nodeDef := entity.ReconstituteNodeDefinition(ndID, wfID, ntID, ndName, config, posX, posY, ndCreatedAt, ndUpdatedAt)
+        nodeDefs = append(nodeDefs, nodeDef)
     }
     if err := nodeRows.Err(); err != nil {
-        return nil, fmt.Errorf("node row iteration error: %w", err)
+        return nil, fmt.Errorf("node definition row iteration error: %w", err)
     }
+    workflow.SetNodeDefinitions(nodeDefs)
 
-    // 3. Query edges
+    // 3. Fetch Edges
     edgeRows, err := q.Query(ctx, `
-        SELECT id, workflow_id, from_node_id, to_node_id
+        SELECT id, workflow_id, from_node_definition_id, to_node_definition_id, created_at
         FROM edge
         WHERE workflow_id = $1
+        ORDER BY created_at ASC
     `, id)
     if err != nil {
         return nil, fmt.Errorf("failed to query edges: %w", err)
     }
     defer edgeRows.Close()
 
-    edges := make([]*aggregate.Edge, 0)
+    var edges []*entity.Edge
     for edgeRows.Next() {
-        var eID, wfID, fromID, toID string
-        if err := edgeRows.Scan(&eID, &wfID, &fromID, &toID); err != nil {
+        var eID, eWfID, fromID, toID string
+        var eCreatedAt time.Time
+
+        if err := edgeRows.Scan(&eID, &eWfID, &fromID, &toID, &eCreatedAt); err != nil {
             return nil, fmt.Errorf("failed to scan edge: %w", err)
         }
-        edges = append(edges, aggregate.ReconstituteEdge(eID, wfID, fromID, toID))
+
+        edge := entity.ReconstituteEdge(eID, eWfID, fromID, toID, eCreatedAt)
+        edges = append(edges, edge)
     }
     if err := edgeRows.Err(); err != nil {
         return nil, fmt.Errorf("edge row iteration error: %w", err)
     }
+    workflow.SetEdges(edges)
 
-    return aggregate.ReconstituteWorkflow(id, name, createdAt, updatedAt, nodeDefinitions, edges), nil
-}
-
-// loadNodeDefinitions loads node definitions for all workflows in map.
-func (r *WorkflowPostgresReadRepository) loadNodeDefinitions(ctx context.Context, workflowMap map[string]*aggregate.Workflow) error {
-    q := r.uow.Querier(ctx)
-
-    rows, err := q.Query(ctx, `
-        SELECT id, workflow_id, node_template_id, name, position_x, position_y
-        FROM node_definition
-        WHERE workflow_id = ANY($1)
-    `, r.getWorkflowIDs(workflowMap))
-    if err != nil {
-        return fmt.Errorf("failed to query node definitions: %w", err)
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var id, workflowID, nodeTemplateID, name string
-        var posX, posY float64
-        if err := rows.Scan(&id, &workflowID, &nodeTemplateID, &name, &posX, &posY); err != nil {
-            return fmt.Errorf("failed to scan node definition: %w", err)
-        }
-        nd := aggregate.ReconstituteNodeDefinition(id, workflowID, nodeTemplateID, name, posX, posY)
-        if wf, ok := workflowMap[workflowID]; ok {
-            wf.NodeDefinitions = append(wf.NodeDefinitions, nd)
-        }
-    }
-    return rows.Err()
-}
-
-// loadEdges loads edges for all workflows in map.
-func (r *WorkflowPostgresReadRepository) loadEdges(ctx context.Context, workflowMap map[string]*aggregate.Workflow) error {
-    q := r.uow.Querier(ctx)
-
-    rows, err := q.Query(ctx, `
-        SELECT id, workflow_id, from_node_id, to_node_id
-        FROM edge
-        WHERE workflow_id = ANY($1)
-    `, r.getWorkflowIDs(workflowMap))
-    if err != nil {
-        return fmt.Errorf("failed to query edges: %w", err)
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var id, workflowID, fromNodeID, toNodeID string
-        if err := rows.Scan(&id, &workflowID, &fromNodeID, &toNodeID); err != nil {
-            return fmt.Errorf("failed to scan edge: %w", err)
-        }
-        edge := aggregate.ReconstituteEdge(id, workflowID, fromNodeID, toNodeID)
-        if wf, ok := workflowMap[workflowID]; ok {
-            wf.Edges = append(wf.Edges, edge)
-        }
-    }
-    return rows.Err()
-}
-
-func (r *WorkflowPostgresReadRepository) getWorkflowIDs(workflowMap map[string]*aggregate.Workflow) []string {
-    ids := make([]string, 0, len(workflowMap))
-    for id := range workflowMap {
-        ids = append(ids, id)
-    }
-    return ids
+    return workflow, nil
 }
 ```
 
-**Dependencies:** `internal/domain/workflow/aggregate`, `internal/port/outbound`
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/internal/domain/workflow/entity`
+- `use-open-workflow.io/engine/internal/port/outbound`
 
 **Tests Required:**
-- Test FindMany returns all workflows with children
-- Test FindMany returns empty slice when no workflows
-- Test FindByID returns workflow with children
-- Test FindByID returns nil for not found
+- Test FindMany returns workflows ordered by created_at
+- Test FindByID returns nil for non-existent workflow
+- Test FindByID returns workflow with NodeDefinitions and Edges
 
 ---
 
-### Step 17: Create Adapter PostgreSQL Write Repository
+### Step 14: Create Outbound Adapter - PostgreSQL Write Repository
 
 **File:** `internal/adapter/workflow/outbound/workflow_postgres_write_repository.go`
 
 **Action:** CREATE
 
-**Rationale:** Implements database write operations with full child entity sync.
+**Rationale:** PostgreSQL implementation of write repository.
 
 **Pseudocode:**
 
@@ -1679,142 +1383,178 @@ package outbound
 
 import (
     "context"
+    "encoding/json"
     "fmt"
 
     "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/internal/domain/workflow/entity"
     portOutbound "use-open-workflow.io/engine/internal/port/outbound"
 )
 
-// WorkflowPostgresWriteRepository implements WorkflowWriteRepository.
 type WorkflowPostgresWriteRepository struct {
     uow portOutbound.UnitOfWork
 }
 
-// NewWorkflowPostgresWriteRepository creates a new repository.
-func NewWorkflowPostgresWriteRepository(uow portOutbound.UnitOfWork) *WorkflowPostgresWriteRepository {
-    return &WorkflowPostgresWriteRepository{uow: uow}
+func NewWorkflowPostgresWriteRepository(
+    uow portOutbound.UnitOfWork,
+) *WorkflowPostgresWriteRepository {
+    return &WorkflowPostgresWriteRepository{
+        uow: uow,
+    }
 }
 
-// Save persists a new workflow with all its child entities.
 func (r *WorkflowPostgresWriteRepository) Save(ctx context.Context, workflow *aggregate.Workflow) error {
     q := r.uow.Querier(ctx)
 
-    // 1. Insert workflow
     _, err := q.Exec(ctx, `
-        INSERT INTO workflow (id, name, created_at, updated_at)
-        VALUES ($1, $2, $3, $4)
-    `, workflow.ID, workflow.Name, workflow.CreatedAt, workflow.UpdatedAt)
+        INSERT INTO workflow (id, name, description, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, workflow.ID, workflow.Name, workflow.Description, workflow.CreatedAt, workflow.UpdatedAt)
+
     if err != nil {
         return fmt.Errorf("failed to save workflow: %w", err)
     }
 
-    // 2. Insert node definitions
-    for _, nd := range workflow.NodeDefinitions {
-        _, err := q.Exec(ctx, `
-            INSERT INTO node_definition (id, workflow_id, node_template_id, name, position_x, position_y)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        `, nd.ID, nd.WorkflowID, nd.NodeTemplateID, nd.Name, nd.PositionX, nd.PositionY)
-        if err != nil {
-            return fmt.Errorf("failed to save node definition: %w", err)
-        }
-    }
-
-    // 3. Insert edges
-    for _, edge := range workflow.Edges {
-        _, err := q.Exec(ctx, `
-            INSERT INTO edge (id, workflow_id, from_node_id, to_node_id)
-            VALUES ($1, $2, $3, $4)
-        `, edge.ID, edge.WorkflowID, edge.FromNodeID, edge.ToNodeID)
-        if err != nil {
-            return fmt.Errorf("failed to save edge: %w", err)
-        }
-    }
-
-    // 4. Register aggregate for event publishing
     r.uow.RegisterNew(workflow)
-
     return nil
 }
 
-// Update updates an existing workflow and syncs all child entities.
-// Uses delete-and-insert strategy for simplicity.
 func (r *WorkflowPostgresWriteRepository) Update(ctx context.Context, workflow *aggregate.Workflow) error {
     q := r.uow.Querier(ctx)
 
-    // 1. Update workflow
     _, err := q.Exec(ctx, `
         UPDATE workflow
-        SET name = $1, updated_at = $2
-        WHERE id = $3
-    `, workflow.Name, workflow.UpdatedAt, workflow.ID)
+        SET name = $1, description = $2, updated_at = $3
+        WHERE id = $4
+    `, workflow.Name, workflow.Description, workflow.UpdatedAt, workflow.ID)
+
     if err != nil {
         return fmt.Errorf("failed to update workflow: %w", err)
     }
 
-    // 2. Delete existing edges (must delete before nodes due to FK)
-    _, err = q.Exec(ctx, `DELETE FROM edge WHERE workflow_id = $1`, workflow.ID)
-    if err != nil {
-        return fmt.Errorf("failed to delete existing edges: %w", err)
-    }
-
-    // 3. Delete existing node definitions
-    _, err = q.Exec(ctx, `DELETE FROM node_definition WHERE workflow_id = $1`, workflow.ID)
-    if err != nil {
-        return fmt.Errorf("failed to delete existing node definitions: %w", err)
-    }
-
-    // 4. Re-insert node definitions
-    for _, nd := range workflow.NodeDefinitions {
-        _, err := q.Exec(ctx, `
-            INSERT INTO node_definition (id, workflow_id, node_template_id, name, position_x, position_y)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        `, nd.ID, nd.WorkflowID, nd.NodeTemplateID, nd.Name, nd.PositionX, nd.PositionY)
-        if err != nil {
-            return fmt.Errorf("failed to insert node definition: %w", err)
-        }
-    }
-
-    // 5. Re-insert edges
-    for _, edge := range workflow.Edges {
-        _, err := q.Exec(ctx, `
-            INSERT INTO edge (id, workflow_id, from_node_id, to_node_id)
-            VALUES ($1, $2, $3, $4)
-        `, edge.ID, edge.WorkflowID, edge.FromNodeID, edge.ToNodeID)
-        if err != nil {
-            return fmt.Errorf("failed to insert edge: %w", err)
-        }
-    }
-
-    // 6. Register aggregate for event publishing
     r.uow.RegisterDirty(workflow)
-
     return nil
 }
 
-// Delete removes a workflow by ID.
-// Child entities are deleted via CASCADE.
 func (r *WorkflowPostgresWriteRepository) Delete(ctx context.Context, id string) error {
     q := r.uow.Querier(ctx)
 
-    _, err := q.Exec(ctx, `DELETE FROM workflow WHERE id = $1`, id)
+    // CASCADE will handle node_definition and edge deletion
+    _, err := q.Exec(ctx, `
+        DELETE FROM workflow
+        WHERE id = $1
+    `, id)
+
     if err != nil {
         return fmt.Errorf("failed to delete workflow: %w", err)
     }
 
     return nil
 }
+
+func (r *WorkflowPostgresWriteRepository) SaveNodeDefinition(ctx context.Context, nodeDef *entity.NodeDefinition) error {
+    q := r.uow.Querier(ctx)
+
+    configJSON, err := json.Marshal(nodeDef.Config)
+    if err != nil {
+        return fmt.Errorf("failed to marshal config: %w", err)
+    }
+
+    _, err = q.Exec(ctx, `
+        INSERT INTO node_definition (id, workflow_id, node_template_id, name, config, position_x, position_y, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `, nodeDef.ID, nodeDef.WorkflowID, nodeDef.NodeTemplateID, nodeDef.Name, configJSON, nodeDef.PositionX, nodeDef.PositionY, nodeDef.CreatedAt, nodeDef.UpdatedAt)
+
+    if err != nil {
+        return fmt.Errorf("failed to save node definition: %w", err)
+    }
+
+    return nil
+}
+
+func (r *WorkflowPostgresWriteRepository) UpdateNodeDefinition(ctx context.Context, nodeDef *entity.NodeDefinition) error {
+    q := r.uow.Querier(ctx)
+
+    configJSON, err := json.Marshal(nodeDef.Config)
+    if err != nil {
+        return fmt.Errorf("failed to marshal config: %w", err)
+    }
+
+    _, err = q.Exec(ctx, `
+        UPDATE node_definition
+        SET name = $1, config = $2, position_x = $3, position_y = $4, updated_at = $5
+        WHERE id = $6
+    `, nodeDef.Name, configJSON, nodeDef.PositionX, nodeDef.PositionY, nodeDef.UpdatedAt, nodeDef.ID)
+
+    if err != nil {
+        return fmt.Errorf("failed to update node definition: %w", err)
+    }
+
+    return nil
+}
+
+func (r *WorkflowPostgresWriteRepository) DeleteNodeDefinition(ctx context.Context, id string) error {
+    q := r.uow.Querier(ctx)
+
+    // CASCADE will handle edge deletion
+    _, err := q.Exec(ctx, `
+        DELETE FROM node_definition
+        WHERE id = $1
+    `, id)
+
+    if err != nil {
+        return fmt.Errorf("failed to delete node definition: %w", err)
+    }
+
+    return nil
+}
+
+func (r *WorkflowPostgresWriteRepository) SaveEdge(ctx context.Context, edge *entity.Edge) error {
+    q := r.uow.Querier(ctx)
+
+    _, err := q.Exec(ctx, `
+        INSERT INTO edge (id, workflow_id, from_node_definition_id, to_node_definition_id, created_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, edge.ID, edge.WorkflowID, edge.FromNodeDefinitionID, edge.ToNodeDefinitionID, edge.CreatedAt)
+
+    if err != nil {
+        return fmt.Errorf("failed to save edge: %w", err)
+    }
+
+    return nil
+}
+
+func (r *WorkflowPostgresWriteRepository) DeleteEdge(ctx context.Context, id string) error {
+    q := r.uow.Querier(ctx)
+
+    _, err := q.Exec(ctx, `
+        DELETE FROM edge
+        WHERE id = $1
+    `, id)
+
+    if err != nil {
+        return fmt.Errorf("failed to delete edge: %w", err)
+    }
+
+    return nil
+}
 ```
 
-**Dependencies:** `internal/domain/workflow/aggregate`, `internal/port/outbound`
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/internal/domain/workflow/entity`
+- `use-open-workflow.io/engine/internal/port/outbound`
 
 **Tests Required:**
-- Test Save persists workflow and children
-- Test Update syncs all child entities
-- Test Delete removes workflow (FK cascade removes children)
+- Test Save persists workflow and registers with UoW
+- Test Update modifies workflow and registers dirty
+- Test Delete removes workflow (cascade deletes children)
+- Test SaveNodeDefinition persists node definition with JSON config
+- Test SaveEdge persists edge
 
 ---
 
-### Step 18: Create Repository Factories
+### Step 15: Create Repository Factory Implementations
 
 **File:** `internal/adapter/workflow/outbound/workflow_postgres_read_repository_factory.go`
 
@@ -1830,15 +1570,12 @@ import (
     "use-open-workflow.io/engine/internal/port/outbound"
 )
 
-// WorkflowPostgresReadRepositoryFactory creates read repositories.
 type WorkflowPostgresReadRepositoryFactory struct{}
 
-// NewWorkflowPostgresReadRepositoryFactory creates a new factory.
 func NewWorkflowPostgresReadRepositoryFactory() *WorkflowPostgresReadRepositoryFactory {
     return &WorkflowPostgresReadRepositoryFactory{}
 }
 
-// Create creates a UoW-scoped read repository.
 func (f *WorkflowPostgresReadRepositoryFactory) Create(uow outbound.UnitOfWork) workflowOutbound.WorkflowReadRepository {
     return NewWorkflowPostgresReadRepository(uow)
 }
@@ -1858,23 +1595,601 @@ import (
     "use-open-workflow.io/engine/internal/port/outbound"
 )
 
-// WorkflowPostgresWriteRepositoryFactory creates write repositories.
 type WorkflowPostgresWriteRepositoryFactory struct{}
 
-// NewWorkflowPostgresWriteRepositoryFactory creates a new factory.
 func NewWorkflowPostgresWriteRepositoryFactory() *WorkflowPostgresWriteRepositoryFactory {
     return &WorkflowPostgresWriteRepositoryFactory{}
 }
 
-// Create creates a UoW-scoped write repository.
 func (f *WorkflowPostgresWriteRepositoryFactory) Create(uow outbound.UnitOfWork) workflowOutbound.WorkflowWriteRepository {
     return NewWorkflowPostgresWriteRepository(uow)
 }
 ```
 
-**Dependencies:** Port layer interfaces
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/port/workflow/outbound`
+- `use-open-workflow.io/engine/internal/port/outbound`
 
-**Tests Required:** None (simple factories)
+**Tests Required:**
+- None (simple factory delegation)
+
+---
+
+### Step 16: Create Inbound Adapter - Mapper Implementation
+
+**File:** `internal/adapter/workflow/inbound/workflow_mapper.go`
+
+**Action:** CREATE
+
+**Rationale:** Convert between aggregates/entities and DTOs.
+
+**Pseudocode:**
+
+```go
+package inbound
+
+import (
+    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/internal/domain/workflow/entity"
+    "use-open-workflow.io/engine/internal/port/workflow/inbound"
+)
+
+type WorkflowMapper struct{}
+
+func NewWorkflowMapper() *WorkflowMapper {
+    return &WorkflowMapper{}
+}
+
+func (m *WorkflowMapper) ToWorkflowDTO(workflow *aggregate.Workflow) (*inbound.WorkflowDTO, error) {
+    nodeDefDTOs := make([]*inbound.NodeDefinitionDTO, len(workflow.NodeDefinitions))
+    for i, nd := range workflow.NodeDefinitions {
+        dto, err := m.ToNodeDefinitionDTO(nd)
+        if err != nil {
+            return nil, err
+        }
+        nodeDefDTOs[i] = dto
+    }
+
+    edgeDTOs := make([]*inbound.EdgeDTO, len(workflow.Edges))
+    for i, e := range workflow.Edges {
+        dto, err := m.ToEdgeDTO(e)
+        if err != nil {
+            return nil, err
+        }
+        edgeDTOs[i] = dto
+    }
+
+    return &inbound.WorkflowDTO{
+        ID:              workflow.ID,
+        Name:            workflow.Name,
+        Description:     workflow.Description,
+        NodeDefinitions: nodeDefDTOs,
+        Edges:           edgeDTOs,
+        CreatedAt:       workflow.CreatedAt,
+        UpdatedAt:       workflow.UpdatedAt,
+    }, nil
+}
+
+func (m *WorkflowMapper) ToNodeDefinitionDTO(nodeDef *entity.NodeDefinition) (*inbound.NodeDefinitionDTO, error) {
+    return &inbound.NodeDefinitionDTO{
+        ID:             nodeDef.ID,
+        WorkflowID:     nodeDef.WorkflowID,
+        NodeTemplateID: nodeDef.NodeTemplateID,
+        Name:           nodeDef.Name,
+        Config:         nodeDef.Config,
+        PositionX:      nodeDef.PositionX,
+        PositionY:      nodeDef.PositionY,
+        CreatedAt:      nodeDef.CreatedAt,
+        UpdatedAt:      nodeDef.UpdatedAt,
+    }, nil
+}
+
+func (m *WorkflowMapper) ToEdgeDTO(edge *entity.Edge) (*inbound.EdgeDTO, error) {
+    return &inbound.EdgeDTO{
+        ID:                   edge.ID,
+        WorkflowID:           edge.WorkflowID,
+        FromNodeDefinitionID: edge.FromNodeDefinitionID,
+        ToNodeDefinitionID:   edge.ToNodeDefinitionID,
+        CreatedAt:            edge.CreatedAt,
+    }, nil
+}
+```
+
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/internal/domain/workflow/entity`
+- `use-open-workflow.io/engine/internal/port/workflow/inbound`
+
+**Tests Required:**
+- Test ToWorkflowDTO converts all fields including nested entities
+- Test ToNodeDefinitionDTO converts all fields
+- Test ToEdgeDTO converts all fields
+
+---
+
+### Step 17: Create Inbound Adapter - Read Service Implementation
+
+**File:** `internal/adapter/workflow/inbound/workflow_read_service.go`
+
+**Action:** CREATE
+
+**Rationale:** Implement read operations following existing patterns.
+
+**Pseudocode:**
+
+```go
+package inbound
+
+import (
+    "context"
+
+    "use-open-workflow.io/engine/internal/port/workflow/inbound"
+    workflowOutbound "use-open-workflow.io/engine/internal/port/workflow/outbound"
+    "use-open-workflow.io/engine/internal/port/outbound"
+)
+
+type WorkflowReadService struct {
+    uowFactory            outbound.UnitOfWorkFactory
+    readRepositoryFactory workflowOutbound.WorkflowReadRepositoryFactory
+    mapper                inbound.WorkflowMapper
+}
+
+func NewWorkflowReadService(
+    uowFactory outbound.UnitOfWorkFactory,
+    readRepositoryFactory workflowOutbound.WorkflowReadRepositoryFactory,
+    mapper inbound.WorkflowMapper,
+) *WorkflowReadService {
+    return &WorkflowReadService{
+        uowFactory:            uowFactory,
+        readRepositoryFactory: readRepositoryFactory,
+        mapper:                mapper,
+    }
+}
+
+func (s *WorkflowReadService) List(ctx context.Context) ([]*inbound.WorkflowDTO, error) {
+    uow := s.uowFactory.Create()
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    workflows, err := readRepo.FindMany(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    workflowDTOs := make([]*inbound.WorkflowDTO, len(workflows))
+    for i, w := range workflows {
+        dto, err := s.mapper.ToWorkflowDTO(w)
+        if err != nil {
+            return nil, err
+        }
+        workflowDTOs[i] = dto
+    }
+
+    return workflowDTOs, nil
+}
+
+func (s *WorkflowReadService) GetByID(ctx context.Context, id string) (*inbound.WorkflowDTO, error) {
+    uow := s.uowFactory.Create()
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    workflow, err := readRepo.FindByID(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+    if workflow == nil {
+        return nil, nil
+    }
+
+    return s.mapper.ToWorkflowDTO(workflow)
+}
+```
+
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/port/workflow/inbound`
+- `use-open-workflow.io/engine/internal/port/workflow/outbound`
+- `use-open-workflow.io/engine/internal/port/outbound`
+
+**Tests Required:**
+- Test List returns all workflows as DTOs
+- Test GetByID returns workflow with nested entities
+- Test GetByID returns nil for non-existent workflow
+
+---
+
+### Step 18: Create Inbound Adapter - Write Service Implementation
+
+**File:** `internal/adapter/workflow/inbound/workflow_write_service.go`
+
+**Action:** CREATE
+
+**Rationale:** Implement write operations with UoW transaction pattern.
+
+**Pseudocode:**
+
+```go
+package inbound
+
+import (
+    "context"
+    "fmt"
+
+    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/internal/port/workflow/inbound"
+    workflowOutbound "use-open-workflow.io/engine/internal/port/workflow/outbound"
+    "use-open-workflow.io/engine/internal/port/outbound"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+type WorkflowWriteService struct {
+    uowFactory             outbound.UnitOfWorkFactory
+    writeRepositoryFactory workflowOutbound.WorkflowWriteRepositoryFactory
+    readRepositoryFactory  workflowOutbound.WorkflowReadRepositoryFactory
+    factory                *aggregate.WorkflowFactory
+    mapper                 inbound.WorkflowMapper
+    idFactory              id.Factory
+}
+
+func NewWorkflowWriteService(
+    uowFactory outbound.UnitOfWorkFactory,
+    writeRepositoryFactory workflowOutbound.WorkflowWriteRepositoryFactory,
+    readRepositoryFactory workflowOutbound.WorkflowReadRepositoryFactory,
+    factory *aggregate.WorkflowFactory,
+    mapper inbound.WorkflowMapper,
+    idFactory id.Factory,
+) *WorkflowWriteService {
+    return &WorkflowWriteService{
+        uowFactory:             uowFactory,
+        writeRepositoryFactory: writeRepositoryFactory,
+        readRepositoryFactory:  readRepositoryFactory,
+        factory:                factory,
+        mapper:                 mapper,
+        idFactory:              idFactory,
+    }
+}
+
+func (s *WorkflowWriteService) Create(ctx context.Context, input inbound.CreateWorkflowInput) (*inbound.WorkflowDTO, error) {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow := s.factory.Make(input.Name, input.Description)
+
+    if err = writeRepo.Save(txCtx, workflow); err != nil {
+        return nil, fmt.Errorf("failed to save workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return nil, fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return s.mapper.ToWorkflowDTO(workflow)
+}
+
+func (s *WorkflowWriteService) Update(ctx context.Context, id string, input inbound.UpdateWorkflowInput) (*inbound.WorkflowDTO, error) {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow, err := readRepo.FindByID(txCtx, id)
+    if err != nil {
+        return nil, fmt.Errorf("failed to find workflow: %w", err)
+    }
+    if workflow == nil {
+        return nil, fmt.Errorf("workflow not found: %s", id)
+    }
+
+    workflow.UpdateName(s.idFactory, input.Name)
+    workflow.UpdateDescription(s.idFactory, input.Description)
+
+    if err = writeRepo.Update(txCtx, workflow); err != nil {
+        return nil, fmt.Errorf("failed to update workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return nil, fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return s.mapper.ToWorkflowDTO(workflow)
+}
+
+func (s *WorkflowWriteService) Delete(ctx context.Context, id string) error {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    if err = writeRepo.Delete(txCtx, id); err != nil {
+        return fmt.Errorf("failed to delete workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return nil
+}
+
+func (s *WorkflowWriteService) AddNodeDefinition(ctx context.Context, workflowID string, input inbound.AddNodeDefinitionInput) (*inbound.NodeDefinitionDTO, error) {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow, err := readRepo.FindByID(txCtx, workflowID)
+    if err != nil {
+        return nil, fmt.Errorf("failed to find workflow: %w", err)
+    }
+    if workflow == nil {
+        return nil, fmt.Errorf("workflow not found: %s", workflowID)
+    }
+
+    nodeDef := workflow.AddNodeDefinition(
+        s.idFactory,
+        input.NodeTemplateID,
+        input.Name,
+        input.Config,
+        input.PositionX,
+        input.PositionY,
+    )
+
+    if err = writeRepo.SaveNodeDefinition(txCtx, nodeDef); err != nil {
+        return nil, fmt.Errorf("failed to save node definition: %w", err)
+    }
+
+    // Update workflow's updated_at
+    if err = writeRepo.Update(txCtx, workflow); err != nil {
+        return nil, fmt.Errorf("failed to update workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return nil, fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return s.mapper.ToNodeDefinitionDTO(nodeDef)
+}
+
+func (s *WorkflowWriteService) UpdateNodeDefinition(ctx context.Context, workflowID string, nodeDefID string, input inbound.UpdateNodeDefinitionInput) (*inbound.NodeDefinitionDTO, error) {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow, err := readRepo.FindByID(txCtx, workflowID)
+    if err != nil {
+        return nil, fmt.Errorf("failed to find workflow: %w", err)
+    }
+    if workflow == nil {
+        return nil, fmt.Errorf("workflow not found: %s", workflowID)
+    }
+
+    nodeDef := workflow.GetNodeDefinition(nodeDefID)
+    if nodeDef == nil {
+        return nil, fmt.Errorf("node definition not found: %s", nodeDefID)
+    }
+
+    // Apply updates
+    if input.Name != "" {
+        nodeDef.UpdateName(input.Name)
+    }
+    if input.Config != nil {
+        nodeDef.UpdateConfig(input.Config)
+    }
+    if input.PositionX != nil && input.PositionY != nil {
+        nodeDef.UpdatePosition(*input.PositionX, *input.PositionY)
+    }
+
+    if err = writeRepo.UpdateNodeDefinition(txCtx, nodeDef); err != nil {
+        return nil, fmt.Errorf("failed to update node definition: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return nil, fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return s.mapper.ToNodeDefinitionDTO(nodeDef)
+}
+
+func (s *WorkflowWriteService) RemoveNodeDefinition(ctx context.Context, workflowID string, nodeDefID string) error {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow, err := readRepo.FindByID(txCtx, workflowID)
+    if err != nil {
+        return fmt.Errorf("failed to find workflow: %w", err)
+    }
+    if workflow == nil {
+        return fmt.Errorf("workflow not found: %s", workflowID)
+    }
+
+    if err = workflow.RemoveNodeDefinition(s.idFactory, nodeDefID); err != nil {
+        return fmt.Errorf("failed to remove node definition: %w", err)
+    }
+
+    // Delete from database (CASCADE handles edges)
+    if err = writeRepo.DeleteNodeDefinition(txCtx, nodeDefID); err != nil {
+        return fmt.Errorf("failed to delete node definition: %w", err)
+    }
+
+    // Update workflow's updated_at
+    if err = writeRepo.Update(txCtx, workflow); err != nil {
+        return fmt.Errorf("failed to update workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return nil
+}
+
+func (s *WorkflowWriteService) AddEdge(ctx context.Context, workflowID string, input inbound.AddEdgeInput) (*inbound.EdgeDTO, error) {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow, err := readRepo.FindByID(txCtx, workflowID)
+    if err != nil {
+        return nil, fmt.Errorf("failed to find workflow: %w", err)
+    }
+    if workflow == nil {
+        return nil, fmt.Errorf("workflow not found: %s", workflowID)
+    }
+
+    edge, err := workflow.AddEdge(s.idFactory, input.FromNodeDefinitionID, input.ToNodeDefinitionID)
+    if err != nil {
+        return nil, fmt.Errorf("failed to add edge: %w", err)
+    }
+
+    if err = writeRepo.SaveEdge(txCtx, edge); err != nil {
+        return nil, fmt.Errorf("failed to save edge: %w", err)
+    }
+
+    // Update workflow's updated_at
+    if err = writeRepo.Update(txCtx, workflow); err != nil {
+        return nil, fmt.Errorf("failed to update workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return nil, fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return s.mapper.ToEdgeDTO(edge)
+}
+
+func (s *WorkflowWriteService) RemoveEdge(ctx context.Context, workflowID string, edgeID string) error {
+    uow := s.uowFactory.Create()
+    writeRepo := s.writeRepositoryFactory.Create(uow)
+    readRepo := s.readRepositoryFactory.Create(uow)
+
+    txCtx, err := uow.Begin(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %w", err)
+    }
+
+    defer func() {
+        if err != nil {
+            uow.Rollback(txCtx)
+        }
+    }()
+
+    workflow, err := readRepo.FindByID(txCtx, workflowID)
+    if err != nil {
+        return fmt.Errorf("failed to find workflow: %w", err)
+    }
+    if workflow == nil {
+        return fmt.Errorf("workflow not found: %s", workflowID)
+    }
+
+    if err = workflow.RemoveEdge(s.idFactory, edgeID); err != nil {
+        return fmt.Errorf("failed to remove edge: %w", err)
+    }
+
+    if err = writeRepo.DeleteEdge(txCtx, edgeID); err != nil {
+        return fmt.Errorf("failed to delete edge: %w", err)
+    }
+
+    // Update workflow's updated_at
+    if err = writeRepo.Update(txCtx, workflow); err != nil {
+        return fmt.Errorf("failed to update workflow: %w", err)
+    }
+
+    if err = uow.Commit(txCtx); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+
+    return nil
+}
+```
+
+**Dependencies:**
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/internal/port/workflow/inbound`
+- `use-open-workflow.io/engine/internal/port/workflow/outbound`
+- `use-open-workflow.io/engine/internal/port/outbound`
+- `use-open-workflow.io/engine/pkg/id`
+
+**Tests Required:**
+- Test Create creates workflow and commits
+- Test Update modifies workflow
+- Test Delete removes workflow
+- Test AddNodeDefinition adds node to workflow
+- Test RemoveNodeDefinition removes node and connected edges
+- Test AddEdge validates nodes and creates edge
+- Test AddEdge rejects self-loop
+- Test AddEdge rejects duplicate
+- Test RemoveEdge removes edge
 
 ---
 
@@ -1884,7 +2199,7 @@ func (f *WorkflowPostgresWriteRepositoryFactory) Create(uow outbound.UnitOfWork)
 
 **Action:** CREATE
 
-**Rationale:** Exposes workflow operations via REST API.
+**Rationale:** HTTP handlers for workflow API endpoints.
 
 **Pseudocode:**
 
@@ -1896,13 +2211,11 @@ import (
     "use-open-workflow.io/engine/internal/port/workflow/inbound"
 )
 
-// WorkflowHandler handles HTTP requests for workflow operations.
 type WorkflowHandler struct {
     readService  inbound.WorkflowReadService
     writeService inbound.WorkflowWriteService
 }
 
-// NewWorkflowHandler creates a new handler.
 func NewWorkflowHandler(
     readService inbound.WorkflowReadService,
     writeService inbound.WorkflowWriteService,
@@ -1913,7 +2226,8 @@ func NewWorkflowHandler(
     }
 }
 
-// List handles GET /api/v1/workflow
+// Workflow CRUD
+
 func (h *WorkflowHandler) List(c fiber.Ctx) error {
     workflows, err := h.readService.List(c.Context())
     if err != nil {
@@ -1924,7 +2238,6 @@ func (h *WorkflowHandler) List(c fiber.Ctx) error {
     return c.JSON(workflows)
 }
 
-// GetByID handles GET /api/v1/workflow/:id
 func (h *WorkflowHandler) GetByID(c fiber.Ctx) error {
     id := c.Params("id")
     workflow, err := h.readService.GetByID(c.Context(), id)
@@ -1941,7 +2254,6 @@ func (h *WorkflowHandler) GetByID(c fiber.Ctx) error {
     return c.JSON(workflow)
 }
 
-// Create handles POST /api/v1/workflow
 func (h *WorkflowHandler) Create(c fiber.Ctx) error {
     var input inbound.CreateWorkflowInput
     if err := c.Bind().JSON(&input); err != nil {
@@ -1960,7 +2272,6 @@ func (h *WorkflowHandler) Create(c fiber.Ctx) error {
     return c.Status(fiber.StatusCreated).JSON(workflow)
 }
 
-// Update handles PUT /api/v1/workflow/:id
 func (h *WorkflowHandler) Update(c fiber.Ctx) error {
     id := c.Params("id")
     var input inbound.UpdateWorkflowInput
@@ -1980,7 +2291,6 @@ func (h *WorkflowHandler) Update(c fiber.Ctx) error {
     return c.JSON(workflow)
 }
 
-// Delete handles DELETE /api/v1/workflow/:id
 func (h *WorkflowHandler) Delete(c fiber.Ctx) error {
     id := c.Params("id")
     if err := h.writeService.Delete(c.Context(), id); err != nil {
@@ -1992,7 +2302,8 @@ func (h *WorkflowHandler) Delete(c fiber.Ctx) error {
     return c.SendStatus(fiber.StatusNoContent)
 }
 
-// AddNodeDefinition handles POST /api/v1/workflow/:id/node
+// NodeDefinition operations (nested under Workflow)
+
 func (h *WorkflowHandler) AddNodeDefinition(c fiber.Ctx) error {
     workflowID := c.Params("id")
     var input inbound.AddNodeDefinitionInput
@@ -2002,32 +2313,51 @@ func (h *WorkflowHandler) AddNodeDefinition(c fiber.Ctx) error {
         })
     }
 
-    workflow, err := h.writeService.AddNodeDefinition(c.Context(), workflowID, input)
+    nodeDef, err := h.writeService.AddNodeDefinition(c.Context(), workflowID, input)
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": err.Error(),
         })
     }
 
-    return c.Status(fiber.StatusCreated).JSON(workflow)
+    return c.Status(fiber.StatusCreated).JSON(nodeDef)
 }
 
-// RemoveNodeDefinition handles DELETE /api/v1/workflow/:id/node/:nodeId
+func (h *WorkflowHandler) UpdateNodeDefinition(c fiber.Ctx) error {
+    workflowID := c.Params("id")
+    nodeDefID := c.Params("nodeDefId")
+    var input inbound.UpdateNodeDefinitionInput
+    if err := c.Bind().JSON(&input); err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+            "error": "invalid request body",
+        })
+    }
+
+    nodeDef, err := h.writeService.UpdateNodeDefinition(c.Context(), workflowID, nodeDefID, input)
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "error": err.Error(),
+        })
+    }
+
+    return c.JSON(nodeDef)
+}
+
 func (h *WorkflowHandler) RemoveNodeDefinition(c fiber.Ctx) error {
     workflowID := c.Params("id")
-    nodeID := c.Params("nodeId")
+    nodeDefID := c.Params("nodeDefId")
 
-    workflow, err := h.writeService.RemoveNodeDefinition(c.Context(), workflowID, nodeID)
-    if err != nil {
+    if err := h.writeService.RemoveNodeDefinition(c.Context(), workflowID, nodeDefID); err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": err.Error(),
         })
     }
 
-    return c.JSON(workflow)
+    return c.SendStatus(fiber.StatusNoContent)
 }
 
-// AddEdge handles POST /api/v1/workflow/:id/edge
+// Edge operations (nested under Workflow)
+
 func (h *WorkflowHandler) AddEdge(c fiber.Ctx) error {
     workflowID := c.Params("id")
     var input inbound.AddEdgeInput
@@ -2037,58 +2367,58 @@ func (h *WorkflowHandler) AddEdge(c fiber.Ctx) error {
         })
     }
 
-    workflow, err := h.writeService.AddEdge(c.Context(), workflowID, input)
+    edge, err := h.writeService.AddEdge(c.Context(), workflowID, input)
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": err.Error(),
         })
     }
 
-    return c.Status(fiber.StatusCreated).JSON(workflow)
+    return c.Status(fiber.StatusCreated).JSON(edge)
 }
 
-// RemoveEdge handles DELETE /api/v1/workflow/:id/edge/:edgeId
 func (h *WorkflowHandler) RemoveEdge(c fiber.Ctx) error {
     workflowID := c.Params("id")
     edgeID := c.Params("edgeId")
 
-    workflow, err := h.writeService.RemoveEdge(c.Context(), workflowID, edgeID)
-    if err != nil {
+    if err := h.writeService.RemoveEdge(c.Context(), workflowID, edgeID); err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": err.Error(),
         })
     }
 
-    return c.JSON(workflow)
+    return c.SendStatus(fiber.StatusNoContent)
 }
 ```
 
-**Dependencies:** `github.com/gofiber/fiber/v3`, `internal/port/workflow/inbound`
+**Dependencies:**
+- `github.com/gofiber/fiber/v3`
+- `use-open-workflow.io/engine/internal/port/workflow/inbound`
 
 **Tests Required:**
-- Test each handler method returns correct HTTP status codes
-- Test JSON binding for invalid input
-- Test not found returns 404
+- Test each handler endpoint returns correct status codes
+- Test error handling returns proper JSON error responses
 
 ---
 
-### Step 20: Register Routes in Router
+### Step 20: Modify Router to Register Workflow Routes
 
 **File:** `api/router.go`
 
 **Action:** MODIFY
 
-**Rationale:** Make workflow endpoints available via the API.
+**Rationale:** Add workflow routes registration.
 
 **Pseudocode:**
 
 ```go
-// Add import for workflow handler
+// Add import
 import (
-    // ... existing imports
+    // existing imports...
     workflowHttp "use-open-workflow.io/engine/api/workflow/http"
 )
 
+// In SetupRouter function, add after registerNodeTemplateRoutes:
 func SetupRouter(c *di.Container) *fiber.App {
     // ... existing code ...
 
@@ -2099,7 +2429,7 @@ func SetupRouter(c *di.Container) *fiber.App {
     return app
 }
 
-// ADD THIS FUNCTION
+// Add new function:
 func registerWorkflowRoutes(router fiber.Router, c *di.Container) {
     workflowHandler := workflowHttp.NewWorkflowHandler(
         c.WorkflowReadService,
@@ -2107,50 +2437,54 @@ func registerWorkflowRoutes(router fiber.Router, c *di.Container) {
     )
 
     workflow := router.Group("/workflow")
+
+    // Workflow CRUD
     workflow.Get("/", workflowHandler.List)
     workflow.Get("/:id", workflowHandler.GetByID)
     workflow.Post("/", workflowHandler.Create)
     workflow.Put("/:id", workflowHandler.Update)
     workflow.Delete("/:id", workflowHandler.Delete)
 
-    // Node definition routes
-    workflow.Post("/:id/node", workflowHandler.AddNodeDefinition)
-    workflow.Delete("/:id/node/:nodeId", workflowHandler.RemoveNodeDefinition)
+    // NodeDefinition operations (nested)
+    workflow.Post("/:id/node-definition", workflowHandler.AddNodeDefinition)
+    workflow.Put("/:id/node-definition/:nodeDefId", workflowHandler.UpdateNodeDefinition)
+    workflow.Delete("/:id/node-definition/:nodeDefId", workflowHandler.RemoveNodeDefinition)
 
-    // Edge routes
+    // Edge operations (nested)
     workflow.Post("/:id/edge", workflowHandler.AddEdge)
     workflow.Delete("/:id/edge/:edgeId", workflowHandler.RemoveEdge)
 }
 ```
 
-**Dependencies:** `api/workflow/http`, `di.Container` with workflow services
+**Dependencies:**
+- `use-open-workflow.io/engine/api/workflow/http`
 
 **Tests Required:**
 - Verify routes are registered correctly
 
 ---
 
-### Step 21: Wire Up Dependencies in Container
+### Step 21: Modify DI Container
 
 **File:** `di/container.go`
 
 **Action:** MODIFY
 
-**Rationale:** Inject all workflow dependencies for the application.
+**Rationale:** Wire up all workflow dependencies.
 
 **Pseudocode:**
 
 ```go
-// Add imports
+// Add imports:
 import (
-    // ... existing imports
+    // existing imports...
+    workflowAggregate "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
     workflowAdapterInbound "use-open-workflow.io/engine/internal/adapter/workflow/inbound"
     workflowAdapterOutbound "use-open-workflow.io/engine/internal/adapter/workflow/outbound"
-    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
     workflowInbound "use-open-workflow.io/engine/internal/port/workflow/inbound"
 )
 
-// Update Container struct
+// Modify Container struct - add fields:
 type Container struct {
     Pool                     *pgxpool.Pool
     NodeTemplateReadService  inbound.NodeTemplateReadService
@@ -2161,14 +2495,16 @@ type Container struct {
 }
 
 // In NewContainer function, add after NodeTemplate wiring:
+func NewContainer(ctx context.Context) (*Container, error) {
+    // ... existing code ...
 
-    // Workflow domain wiring
+    // === WORKFLOW DOMAIN WIRING ===
 
-    // Mappers
-    workflowInboundMapper := workflowAdapterInbound.NewWorkflowMapper()
+    // Mapper
+    workflowMapper := workflowAdapterInbound.NewWorkflowMapper()
 
     // Factory
-    workflowFactory := aggregate.NewWorkflowFactory(idFactory)
+    workflowFactory := workflowAggregate.NewWorkflowFactory(idFactory)
 
     // Repository Factories
     workflowReadRepositoryFactory := workflowAdapterOutbound.NewWorkflowPostgresReadRepositoryFactory()
@@ -2178,7 +2514,7 @@ type Container struct {
     workflowReadService := workflowAdapterInbound.NewWorkflowReadService(
         uowFactory,
         workflowReadRepositoryFactory,
-        workflowInboundMapper,
+        workflowMapper,
     )
 
     workflowWriteService := workflowAdapterInbound.NewWorkflowWriteService(
@@ -2186,11 +2522,12 @@ type Container struct {
         workflowWriteRepositoryFactory,
         workflowReadRepositoryFactory,
         workflowFactory,
-        workflowInboundMapper,
+        workflowMapper,
         idFactory,
     )
 
-// Update return statement
+    // ... existing outbox code ...
+
     return &Container{
         Pool:                     pool,
         NodeTemplateReadService:  nodeTemplateReadService,
@@ -2199,136 +2536,258 @@ type Container struct {
         WorkflowWriteService:     workflowWriteService,  // ADD
         OutboxProcessor:          outboxProcessor,
     }, nil
+}
 ```
 
-**Dependencies:** All workflow adapters and ports
+**Dependencies:**
+- All workflow domain, port, and adapter packages
 
 **Tests Required:**
-- Verify container builds successfully with all dependencies
+- Verify container creates successfully with all dependencies
+
+---
+
+### Step 22: Create Aggregate Unit Tests
+
+**File:** `internal/domain/workflow/aggregate/workflow_test.go`
+
+**Action:** CREATE
+
+**Rationale:** Unit tests for Workflow aggregate business logic.
+
+**Pseudocode:**
+
+```go
+package aggregate_test
+
+import (
+    "testing"
+
+    "use-open-workflow.io/engine/internal/domain/workflow/aggregate"
+    "use-open-workflow.io/engine/pkg/id"
+)
+
+func TestWorkflowFactory_Make(t *testing.T) {
+    // Setup
+    idFactory := id.NewULIDFactory()
+    factory := aggregate.NewWorkflowFactory(idFactory)
+
+    // Execute
+    workflow := factory.Make("Test Workflow", "A test description")
+
+    // Assert
+    // - workflow.ID is not empty
+    // - workflow.Name == "Test Workflow"
+    // - workflow.Description == "A test description"
+    // - workflow.NodeDefinitions is empty slice
+    // - workflow.Edges is empty slice
+    // - workflow.Events() has one CreateWorkflow event
+}
+
+func TestWorkflow_AddNodeDefinition(t *testing.T) {
+    // Setup
+    idFactory := id.NewULIDFactory()
+    factory := aggregate.NewWorkflowFactory(idFactory)
+    workflow := factory.Make("Test", "Desc")
+    workflow.ClearEvents() // Clear creation event
+
+    // Execute
+    nodeDef := workflow.AddNodeDefinition(idFactory, "template-id", "Node 1", nil, 100, 200)
+
+    // Assert
+    // - nodeDef.ID is not empty
+    // - nodeDef.WorkflowID == workflow.ID
+    // - nodeDef.NodeTemplateID == "template-id"
+    // - nodeDef.Name == "Node 1"
+    // - nodeDef.PositionX == 100, nodeDef.PositionY == 200
+    // - len(workflow.NodeDefinitions) == 1
+    // - workflow.Events() has one AddNodeDefinition event
+}
+
+func TestWorkflow_RemoveNodeDefinition_RemovesConnectedEdges(t *testing.T) {
+    // Setup
+    idFactory := id.NewULIDFactory()
+    factory := aggregate.NewWorkflowFactory(idFactory)
+    workflow := factory.Make("Test", "Desc")
+
+    node1 := workflow.AddNodeDefinition(idFactory, "t1", "Node 1", nil, 0, 0)
+    node2 := workflow.AddNodeDefinition(idFactory, "t2", "Node 2", nil, 0, 0)
+    workflow.AddEdge(idFactory, node1.ID, node2.ID)
+    workflow.ClearEvents()
+
+    // Execute
+    err := workflow.RemoveNodeDefinition(idFactory, node1.ID)
+
+    // Assert
+    // - err is nil
+    // - len(workflow.NodeDefinitions) == 1
+    // - len(workflow.Edges) == 0 (edge was removed with node)
+}
+
+func TestWorkflow_AddEdge_ValidatesNoSelfLoop(t *testing.T) {
+    // Setup
+    idFactory := id.NewULIDFactory()
+    factory := aggregate.NewWorkflowFactory(idFactory)
+    workflow := factory.Make("Test", "Desc")
+    node := workflow.AddNodeDefinition(idFactory, "t1", "Node 1", nil, 0, 0)
+
+    // Execute
+    _, err := workflow.AddEdge(idFactory, node.ID, node.ID)
+
+    // Assert
+    // - err == aggregate.ErrSelfLoop
+}
+
+func TestWorkflow_AddEdge_ValidatesNodesExist(t *testing.T) {
+    // Setup
+    idFactory := id.NewULIDFactory()
+    factory := aggregate.NewWorkflowFactory(idFactory)
+    workflow := factory.Make("Test", "Desc")
+    node := workflow.AddNodeDefinition(idFactory, "t1", "Node 1", nil, 0, 0)
+
+    // Execute
+    _, err := workflow.AddEdge(idFactory, node.ID, "non-existent-id")
+
+    // Assert
+    // - err == aggregate.ErrNodeDefinitionNotFound
+}
+
+func TestWorkflow_AddEdge_RejectsDuplicate(t *testing.T) {
+    // Setup
+    idFactory := id.NewULIDFactory()
+    factory := aggregate.NewWorkflowFactory(idFactory)
+    workflow := factory.Make("Test", "Desc")
+    node1 := workflow.AddNodeDefinition(idFactory, "t1", "Node 1", nil, 0, 0)
+    node2 := workflow.AddNodeDefinition(idFactory, "t2", "Node 2", nil, 0, 0)
+    workflow.AddEdge(idFactory, node1.ID, node2.ID)
+
+    // Execute
+    _, err := workflow.AddEdge(idFactory, node1.ID, node2.ID)
+
+    // Assert
+    // - err == aggregate.ErrDuplicateEdge
+}
+```
+
+**Dependencies:**
+- `testing`
+- `use-open-workflow.io/engine/internal/domain/workflow/aggregate`
+- `use-open-workflow.io/engine/pkg/id`
+
+**Tests Required:**
+- All test cases listed above
 
 ---
 
 ## 4. Data Changes
 
-### Schema/Model Updates
-
-**New Tables:**
+**Schema/Model Updates:**
 
 ```sql
--- workflow: Aggregate root
-workflow (
+-- workflow table
+CREATE TABLE workflow (
     id VARCHAR(26) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-)
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
 
--- node_definition: Child entity
-node_definition (
+-- node_definition table
+CREATE TABLE node_definition (
     id VARCHAR(26) PRIMARY KEY,
     workflow_id VARCHAR(26) NOT NULL REFERENCES workflow(id) ON DELETE CASCADE,
     node_template_id VARCHAR(26) NOT NULL REFERENCES node_template(id),
     name VARCHAR(255) NOT NULL,
+    config JSONB,
     position_x DOUBLE PRECISION NOT NULL DEFAULT 0,
-    position_y DOUBLE PRECISION NOT NULL DEFAULT 0
-)
+    position_y DOUBLE PRECISION NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
 
--- edge: Child entity
-edge (
+-- edge table
+CREATE TABLE edge (
     id VARCHAR(26) PRIMARY KEY,
     workflow_id VARCHAR(26) NOT NULL REFERENCES workflow(id) ON DELETE CASCADE,
-    from_node_id VARCHAR(26) NOT NULL REFERENCES node_definition(id) ON DELETE CASCADE,
-    to_node_id VARCHAR(26) NOT NULL REFERENCES node_definition(id) ON DELETE CASCADE,
-    UNIQUE (workflow_id, from_node_id, to_node_id)
-)
+    from_node_definition_id VARCHAR(26) NOT NULL REFERENCES node_definition(id) ON DELETE CASCADE,
+    to_node_definition_id VARCHAR(26) NOT NULL REFERENCES node_definition(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_edge UNIQUE (workflow_id, from_node_definition_id, to_node_definition_id),
+    CONSTRAINT no_self_loop CHECK (from_node_definition_id != to_node_definition_id)
+);
 ```
 
-### Migration Notes
+**Migration Notes:**
 
-- Migration must be applied after 001_initial_schema.sql
-- Uses CASCADE delete to ensure child entities are cleaned up with parent
-- Foreign key to node_template ensures referential integrity
-- No backward compatibility concerns (new tables only)
-
----
+- Migration file `002_workflow_schema.sql` should be run after `001_initial_schema.sql`
+- Foreign key to `node_template` requires the table to exist
+- CASCADE delete ensures referential integrity when deleting workflows
 
 ## 5. Integration Points
 
-| Service | Interaction | Error Handling |
-|---------|-------------|----------------|
-| NodeTemplate domain | NodeDefinition references node_template.id | Foreign key constraint returns error if template doesn't exist |
-| Outbox pattern | Domain events persisted on commit | Transaction rollback if outbox write fails |
-| UnitOfWork | Transaction management for all operations | Deferred rollback in service methods |
+- **NodeTemplate Domain:**
+  - **Interaction:** NodeDefinition references NodeTemplate by ID
+  - **Error Handling:** Foreign key constraint in database ensures NodeTemplate exists
 
----
+- **Outbox Pattern:**
+  - **Interaction:** Domain events (CreateWorkflow, AddNodeDefinition, etc.) are registered with UoW and persisted to outbox
+  - **Error Handling:** Outbox processor handles retry on failure
 
 ## 6. Edge Cases & Error Handling
 
-| Scenario | Handling |
-|----------|----------|
-| Workflow not found on update/delete | Return error "workflow not found: {id}" |
-| NodeDefinition references non-existent NodeTemplate | FK constraint error from database |
-| Edge references non-existent NodeDefinition | Domain validation rejects with ErrNodeDefinitionNotFound |
-| Self-loop edge (from == to) | Domain validation rejects with ErrSelfLoopNotAllowed |
-| Duplicate edge between same nodes | Domain validation rejects with ErrEdgeAlreadyExists |
-| Remove node that has connected edges | Domain method RemoveNodeDefinition cascades to remove edges |
-| Empty workflow name | Allow (no validation currently, could add if needed) |
-| Transaction failure mid-operation | UoW rollback ensures consistency |
-
----
+| Scenario                          | Handling                                              |
+| --------------------------------- | ----------------------------------------------------- |
+| Create workflow with empty name   | Database constraint or service validation (optional)  |
+| Add edge with non-existent nodes  | Aggregate returns ErrNodeDefinitionNotFound           |
+| Add edge creating self-loop       | Aggregate returns ErrSelfLoop                         |
+| Add duplicate edge                | Aggregate returns ErrDuplicateEdge                    |
+| Remove non-existent node          | Aggregate returns ErrNodeDefinitionNotFound           |
+| Remove non-existent edge          | Aggregate returns ErrEdgeNotFound                     |
+| Delete workflow with nodes/edges  | CASCADE delete removes all children automatically     |
+| Invalid NodeTemplateID            | Foreign key constraint rejects save                   |
+| Concurrent modification           | Transaction isolation handles conflicts               |
 
 ## 7. Testing Strategy
 
-### Unit Tests
+**Unit Tests:**
 
-- **Aggregate tests** (`workflow_test.go`):
-  - Test Workflow creation with events
-  - Test AddNodeDefinition adds to slice
-  - Test RemoveNodeDefinition cascades to edges
-  - Test AddEdge validates nodes and duplicates
-  - Test RemoveEdge removes by ID
-  - Test error cases return appropriate errors
+- Workflow aggregate creation and reconstitution
+- AddNodeDefinition creates entity and emits event
+- RemoveNodeDefinition removes node and connected edges
+- AddEdge validates constraints (self-loop, duplicate, nodes exist)
+- RemoveEdge removes edge and emits event
+- Entity creation and update methods
 
-- **Entity tests**:
-  - Test NodeDefinition creation and reconstitution
-  - Test Edge creation and reconstitution
+**Integration Tests:**
 
-- **Mapper tests**:
-  - Test To converts aggregate with children to DTO
-  - Test ToList handles empty and populated slices
+- Repository FindMany and FindByID with nested entities
+- Write repository Save/Update/Delete operations
+- Transaction rollback on error
+- Foreign key constraint enforcement
 
-### Integration Tests
+**Manual Verification:**
 
-- **Repository tests** (if applicable):
-  - Test Save/FindByID roundtrip
-  - Test Update syncs child entities correctly
-  - Test Delete cascades to children
-  - Test FindMany loads all children
-
-### Manual Verification
-
-1. Start application with `make run`
-2. Apply migration: `psql -f migration/002_workflow_schema.sql`
-3. Create workflow: `POST /api/v1/workflow` with `{"name": "Test Workflow"}`
-4. Add node: `POST /api/v1/workflow/{id}/node` with node template reference
-5. Add another node
-6. Add edge: `POST /api/v1/workflow/{id}/edge` connecting the two nodes
-7. Get workflow: `GET /api/v1/workflow/{id}` - verify all children returned
-8. Remove edge: `DELETE /api/v1/workflow/{id}/edge/{edgeId}`
-9. Remove node: `DELETE /api/v1/workflow/{id}/node/{nodeId}`
-10. Delete workflow: `DELETE /api/v1/workflow/{id}`
-11. Verify cascade delete removed children from database
-
----
+1. Run migration against database
+2. Create a workflow via API
+3. Add multiple node definitions
+4. Add edges between nodes
+5. Verify GET returns complete workflow with nested entities
+6. Delete a node and verify connected edges are removed
+7. Delete workflow and verify cascade deletion
 
 ## 8. Implementation Order
 
-1. **Step 1: Migration** — Database tables must exist first
-2. **Steps 2-6: Domain layer** — Core business logic, no external dependencies
-3. **Steps 7-12: Port layer** — Define contracts before implementations
-4. **Step 13: Mapper** — Needed by services
-5. **Steps 14-18: Adapter layer services and repositories** — Implement contracts
-6. **Step 19: HTTP handler** — Expose via API
-7. **Steps 20-21: Wiring** — Connect everything in router and DI container
+Recommended sequence for implementation:
 
-This order ensures each step builds on the previous, minimizing back-and-forth changes.
+1. **Step 1: Database Migration** — Schema must exist before any code runs
+2. **Steps 2-3: Entities** — NodeDefinition and Edge are dependencies of Workflow
+3. **Step 4: Domain Events** — Events are used by aggregate methods
+4. **Steps 5-6: Aggregate and Factory** — Core domain logic
+5. **Steps 7-9: Inbound Ports** — DTOs, service interfaces, mapper interface
+6. **Steps 10-12: Outbound Ports** — Models, repository interfaces, factory interfaces
+7. **Steps 13-15: Outbound Adapters** — PostgreSQL repositories and factories
+8. **Steps 16-18: Inbound Adapters** — Mapper, read service, write service
+9. **Step 19: HTTP Handler** — API layer
+10. **Steps 20-21: Router and DI** — Wire everything together
+11. **Step 22: Unit Tests** — Verify aggregate business logic
