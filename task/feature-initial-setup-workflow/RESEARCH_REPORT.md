@@ -92,9 +92,9 @@
 - [api/router.go](api/router.go) — Register `/api/v1/workflow` routes
 
 ### Database Changes
-- New tables: `workflows`, `node_definitions`, `edges`
-- Foreign keys: `node_definitions.workflow_id`, `edges.workflow_id`
-- Reference: `node_definitions.node_template_id` → `node_templates.id`
+- New tables: `workflow`, `node_definition`, `edge`
+- Foreign keys: `node_definition.workflow_id`, `edge.workflow_id`
+- Reference: `node_definition.node_template_id` → `node_template.id`
 
 ### Indirect Impacts
 - Outbox table will receive workflow domain events
@@ -118,7 +118,7 @@
 - Edges should form a valid DAG (no cycles) — consider for future validation
 
 ### Database Conventions
-- Table names: snake_case plural (`workflows`, `node_definitions`, `edges`)
+- Table names: snake_case singular (`workflow`, `node_definition`, `edge`)
 - Primary keys: `VARCHAR(26)` for ULID
 - Timestamps: `created_at`, `updated_at` with `TIMESTAMP WITH TIME ZONE`
 - Use foreign key constraints

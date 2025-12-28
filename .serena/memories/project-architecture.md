@@ -120,6 +120,12 @@ HTTP handlers using Fiber framework.
 - Repositories are created per-UoW for transaction scoping
 - Factory interfaces: `NodeTemplateReadRepositoryFactory`, `NodeTemplateWriteRepositoryFactory`
 
+## Database Conventions
+- Table names: snake_case singular (e.g., `workflow`, `node_definition`, `node_template`)
+- Primary keys: `VARCHAR(26)` for ULID
+- Timestamps: `created_at`, `updated_at` with `TIMESTAMP WITH TIME ZONE`
+- Use foreign key constraints
+
 ## Commands
 - `make test` - Run all tests
 - `make build` - Build to `bin/api`
